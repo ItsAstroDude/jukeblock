@@ -57,6 +57,23 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		const val PROGRESS_HEIGHT = 4
 		/** Generous vertical hit area — the bar itself is only 4px and hard to hit. */
 		const val PROGRESS_HIT_PAD = 6
+
+		val REVERSE_DNS_PREFIXES = setOf("com", "org", "net", "io", "app")
+
+		/** Ids whose cleaned-up form still isn't what the app is actually called. */
+		val FRIENDLY_NAMES = mapOf(
+			"msedge" to "Edge",
+			"chrome" to "Chrome",
+			"firefox" to "Firefox",
+			"brave" to "Brave",
+			"opera" to "Opera",
+			"vlc" to "VLC",
+			"wmplayer" to "Windows Media Player",
+			"microsoft.zunemusic" to "Media Player",
+			"microsoft.zunevideo" to "Films & TV",
+			"applemusic" to "Apple Music",
+			"itunes" to "iTunes",
+		)
 	}
 
 	private var openedAtMs = 0L
@@ -157,6 +174,12 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		val originX = (-railWidth * (1f - slide)).roundToInt()
 
 		super.extractRenderState(graphics, mouseX, mouseY, partialTick)
+
+		// Put the rail in its own stratum. HUD elements from other mods are drawn into
+		// the same render state, and anything that doesn't check for an open screen
+		// otherwise lands on top of the panel — durability readouts over the transport
+		// row, which is what a busy modpack looks like without this.
+		graphics.nextStratum()
 
 		graphics.fill(originX, 0, originX + railWidth, height, COLOR_PANEL)
 
@@ -547,12 +570,33 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	}
 
 	/**
-	 * SMTC ids are raw app identifiers — `Spotify.exe`, or a package family name for
-	 * Store apps. Trim them into something worth showing.
+	 * SMTC ids are raw app identifiers. They come in three shapes:
+	 *
+	 *     Spotify.exe                            classic desktop executable
+	 *     Helium.NXYZFKH5N5QLK4VHZYCROOE6P4      packaged app + publisher hash
+	 *     Microsoft.ZuneMusic_8wekyb3d8bbwe!App  package family name + app id
+	 *
+	 * Showing any of those verbatim in the panel is noise, so strip them down to the bit
+	 * a person would recognise.
 	 */
 	private fun prettySourceName(sourceId: String): String {
 		if (sourceId.isEmpty()) return "Unknown"
-		val base = sourceId.substringBefore('!').substringBefore('_')
-		return base.removeSuffix(".exe").ifEmpty { sourceId }
+
+		var name = sourceId.substringBefore('!').substringBefore('_').removeSuffix(".exe")
+
+		val segments = name.split('.')
+		if (segments.size > 1) {
+			val last = segments.last()
+			name = when {
+				// Trailing publisher hash: a long meaningless run of caps and digits.
+				last.length >= 10 && last.all { it.isUpperCase() || it.isDigit() } ->
+					segments.dropLast(1).joinToString(".")
+				// Reverse-DNS id, e.g. com.squirrel.Discord — the app name is last.
+				segments.first().lowercase() in REVERSE_DNS_PREFIXES -> last
+				else -> name
+			}
+		}
+
+		return FRIENDLY_NAMES[name.lowercase()] ?: name.ifEmpty { sourceId }
 	}
 }
