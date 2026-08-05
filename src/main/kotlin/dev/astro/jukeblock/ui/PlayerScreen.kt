@@ -61,6 +61,9 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 
 		// Gradient endpoints. Both are fully opaque and the blend is only 6%, so the
 		// panel's own alpha shifts by well under one step of 255.
+		/** Behind every glyph, so icons keep contrast on a translucent panel. */
+		const val GLYPH_SHADOW = 0x90000000.toInt()
+
 		const val WHITE = 0xFFFFFFFF.toInt()
 		const val BLACK = 0xFF000000.toInt()
 
@@ -151,7 +154,7 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		colorTextFaint = if (light) TEXT_ON_LIGHT_FAINT else TEXT_ON_DARK_FAINT
 		// Empty progress track: a step away from the surface, toward the text.
 		colorTrack = Accent.lerpColor(panel or (0xFF shl 24), colorText, 0.18f)
-		colorDisabled = Accent.lerpColor(panel or (0xFF shl 24), colorText, 0.30f)
+		colorDisabled = Accent.lerpColor(panel or (0xFF shl 24), colorText, 0.42f)
 	}
 
 	private val transportButtons = mutableListOf<TransportButton>()
@@ -206,14 +209,11 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		// cover that jumps size on every skip is worse than a little slack.
 		val metadata = font.lineHeight * 3 + 6
 		val progress = PROGRESS_HEIGHT + 5 + font.lineHeight
-		val source = font.lineHeight + PADDING
 
 		val reserved = PADDING + SECTION_GAP + metadata + SECTION_GAP + progress +
 			SECTION_GAP + MAIN_TRANSPORT_SIZE + SECTION_GAP +
-			VOLUME_HEIGHT + SECTION_GAP + source +
-			// Clearance above the pinned source line: without it the transport row lands
-			// exactly on top of it at GUI scale 4, where the screen is only ~270 units tall.
-			SECTION_GAP
+			// One bottom band holds volume and the toggles together.
+			TOGGLE_SIZE + PADDING
 
 		artSize = minOf(railWidth - PADDING * 2, height - reserved).coerceAtLeast(0)
 	}
@@ -289,15 +289,13 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		y = renderArtwork(graphics, originX, y, accent)
 		y = renderMetadata(graphics, originX, y, track)
 		y = renderProgress(graphics, originX, y, track, accent, mouseX, mouseY)
-		y = renderTransport(graphics, originX, y, track, accent, mouseX, mouseY)
-		renderVolume(graphics, originX, y, accent, mouseX, mouseY)
-		renderSourceIndicator(graphics, originX, track)
-		// Toggles share the source line, vertically centred against the text.
-		renderToggles(
-			graphics, originX,
-			height - PADDING - font.lineHeight - (TOGGLE_SIZE - font.lineHeight) / 2,
-			track, accent, mouseX, mouseY,
-		)
+		renderTransport(graphics, originX, y, track, accent, mouseX, mouseY)
+
+		// One bottom band: volume on the left, toggles on the right. Giving the slider
+		// its own row cost a whole section's height and the artwork paid for it.
+		val bandTop = height - PADDING - TOGGLE_SIZE
+		renderToggles(graphics, originX, bandTop, track, accent, mouseX, mouseY)
+		renderVolume(graphics, originX, bandTop, accent, mouseX, mouseY)
 	}
 
 	private fun renderEmpty(graphics: GuiGraphicsExtractor, originX: Int) {
@@ -406,6 +404,12 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 
 		val total = formatTime(track.durationMs)
 		graphics.text(font, total, x + barWidth - font.width(total), y, colorTextFaint)
+
+		// The gap between elapsed and total is dead space, and the source name is short.
+		// Putting it here buys back the whole line it used to occupy at the bottom.
+		val source = prettySourceName(track.sourceId) +
+			if (MediaService.pinnedSourceId != null) " *" else ""
+		graphics.centeredText(font, source, x + barWidth / 2, y, colorTextFaint)
 
 		y += font.lineHeight + SECTION_GAP
 		return y
@@ -519,9 +523,10 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		}
 		val color = when {
 			!button.enabled -> colorDisabled
-			active -> accent
-			hovered -> colorText
-			else -> colorTextDim
+			active || hovered -> accent
+			// Full strength, not the dim shade: these are the panel's primary action and
+			// have to stay legible over whatever the world is doing behind them.
+			else -> colorText
 		}
 		drawGlyph(graphics, button.glyph, button.x, button.y, button.size, color, iconSize)
 	}
@@ -550,36 +555,34 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		volumeBarTop = top
 
 		val x = originX + PADDING + VOLUME_ICON_WIDTH
-		val barWidth = railWidth - PADDING * 2 - VOLUME_ICON_WIDTH
+		val barWidth = volumeBarWidth()
 		val fill = (barWidth * level).roundToInt().coerceIn(0, barWidth)
 
-		// A small speaker mark, drawn from two rectangles — enough to label the row.
-		val cy = top + VOLUME_HEIGHT / 2
-		graphics.fill(originX + PADDING, cy - 2, originX + PADDING + 3, cy + 2, colorTextFaint)
-		graphics.fill(originX + PADDING + 3, cy - 4, originX + PADDING + 6, cy + 4, colorTextFaint)
+		// Centred in the band rather than sitting on its top edge, so it lines up with
+		// the toggle glyphs beside it.
+		val barY = top + (TOGGLE_SIZE - VOLUME_HEIGHT) / 2
+		val cy = barY + VOLUME_HEIGHT / 2
 
-		graphics.fill(x, top, x + barWidth, top + VOLUME_HEIGHT, colorTrack)
-		graphics.fill(x, top, x + fill, top + VOLUME_HEIGHT, Accent.withAlpha(accent, 0.85f))
+		// A small speaker mark, drawn from two rectangles — enough to label the row.
+		graphics.fill(originX + PADDING, cy - 2, originX + PADDING + 3, cy + 2, colorTextDim)
+		graphics.fill(originX + PADDING + 3, cy - 4, originX + PADDING + 6, cy + 4, colorTextDim)
+
+		graphics.fill(x, barY, x + barWidth, barY + VOLUME_HEIGHT, colorTrack)
+		graphics.fill(x, barY, x + fill, barY + VOLUME_HEIGHT, Accent.withAlpha(accent, 0.9f))
 
 		val hovered = mouseX >= x && mouseX < x + barWidth &&
-			mouseY >= top - VOLUME_HIT_PAD && mouseY < top + VOLUME_HEIGHT + VOLUME_HIT_PAD
+			mouseY >= barY - VOLUME_HIT_PAD && mouseY < barY + VOLUME_HEIGHT + VOLUME_HIT_PAD
 		if (hovered || draggingVolume) {
-			graphics.fill(x + fill - 2, top - 3, x + fill + 2, top + VOLUME_HEIGHT + 3, colorText)
+			graphics.fill(x + fill - 2, barY - 3, x + fill + 2, barY + VOLUME_HEIGHT + 3, colorText)
 		}
 
-		return top + VOLUME_HEIGHT + SECTION_GAP
+		return top
 	}
 
-	private fun renderSourceIndicator(graphics: GuiGraphicsExtractor, originX: Int, track: TrackInfo) {
-		val y = height - PADDING - font.lineHeight
-		val label = Component.literal(prettySourceName(track.sourceId))
-		graphics.text(font, label, originX + PADDING, y, colorTextFaint)
-
-		val pinned = MediaService.pinnedSourceId != null
-		if (pinned) {
-			val marker = Component.translatable("jukeblock.panel.pinned")
-			graphics.text(font, marker, originX + railWidth - PADDING - font.width(marker), y, colorTextFaint)
-		}
+	/** Runs from the speaker mark to just short of the toggle buttons. */
+	private fun volumeBarWidth(): Int {
+		val togglesWidth = 2 * TOGGLE_SIZE + 4
+		return (railWidth - PADDING * 2 - VOLUME_ICON_WIDTH - togglesWidth - 8).coerceAtLeast(16)
 	}
 
 	// --- glyphs ---------------------------------------------------------------
@@ -594,19 +597,26 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	private fun drawGlyph(graphics: GuiGraphicsExtractor, glyph: Glyph, x: Int, y: Int, size: Int, color: Int, iconSize: Int = ICON_SIZE) {
 		val left = x + (size - iconSize) / 2
 		val top = y + (size - iconSize) / 2
-		graphics.blit(
+
+		fun blit(dx: Int, dy: Int, tint: Int) = graphics.blit(
 			RenderPipelines.GUI_TEXTURED,
 			ICONS,
-			left,
-			top,
+			left + dx,
+			top + dy,
 			(glyph.index * ICON_SIZE).toFloat(),
 			0f,
 			iconSize,
 			iconSize,
 			ICON_SHEET_WIDTH,
 			ICON_SIZE,
-			color,
+			tint,
 		)
+
+		// Drop shadow first. The panel is translucent and the user can make it more so;
+		// at 50% opacity a flat grey glyph over bright terrain nearly disappears. The
+		// shadow gives every icon its own contrast regardless of what's behind it.
+		blit(1, 1, GLYPH_SHADOW)
+		blit(0, 0, color)
 	}
 
 	// --- input ----------------------------------------------------------------
@@ -725,19 +735,18 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	private var progressBarTop: Int? = null
 
 	private fun overVolumeBar(mx: Double, my: Double): Boolean {
-		val y = volumeBarTop ?: return false
+		val band = volumeBarTop ?: return false
+		val y = band + (TOGGLE_SIZE - VOLUME_HEIGHT) / 2
 		val originX = (-railWidth * (1f - slide)).roundToInt()
 		val x = originX + PADDING + VOLUME_ICON_WIDTH
-		val barWidth = railWidth - PADDING * 2 - VOLUME_ICON_WIDTH
-		return mx >= x && mx < x + barWidth &&
+		return mx >= x && mx < x + volumeBarWidth() &&
 			my >= y - VOLUME_HIT_PAD && my < y + VOLUME_HEIGHT + VOLUME_HIT_PAD
 	}
 
 	private fun volumeFractionAt(mx: Double): Float {
 		val originX = (-railWidth * (1f - slide)).roundToInt()
 		val x = originX + PADDING + VOLUME_ICON_WIDTH
-		val barWidth = railWidth - PADDING * 2 - VOLUME_ICON_WIDTH
-		return ((mx - x) / barWidth).toFloat().coerceIn(0f, 1f)
+		return ((mx - x) / volumeBarWidth()).toFloat().coerceIn(0f, 1f)
 	}
 
 	private fun fractionAt(mx: Double): Float {
