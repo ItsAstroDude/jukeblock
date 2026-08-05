@@ -63,15 +63,26 @@ object AlbumArt {
 
 		requestedKey = key
 		MediaService.requestArtwork { bytes ->
-			// Back on the media thread here. Decode is cheap enough to do off-thread,
-			// and it keeps image parsing away from the render loop.
+			// Still on the media thread. Both the decode and the accent extraction happen
+			// here on purpose: extraction walks the image's whole pixel array, which for
+			// Spotify's 640x640 covers is 1.6 MB, and doing that on the render thread put
+			// a visible hitch right at the moment the panel slides in.
 			val decoded = decode(bytes)
+			val extractedAccent = decoded?.let {
+				try {
+					Accent.extract(it)
+				} catch (e: Exception) {
+					Jukeblock.LOGGER.debug("Accent extraction failed", e)
+					Accent.FALLBACK
+				}
+			} ?: Accent.FALLBACK
+
 			Minecraft.getInstance().execute {
 				// The user may have skipped tracks while this was in flight.
 				if (requestedKey == key) {
 					requestedKey = null
 					if (decoded != null) {
-						apply(key, decoded)
+						apply(key, decoded, extractedAccent)
 					} else {
 						clear()
 						loadedKey = key
@@ -95,10 +106,10 @@ object AlbumArt {
 		}
 	}
 
-	/** Render thread only: uploads the image and swaps it in. */
-	private fun apply(key: String, image: NativeImage) {
+	/** Render thread only: uploads the image and swaps it in. Nothing heavy happens here. */
+	private fun apply(key: String, image: NativeImage, extractedAccent: Int) {
 		try {
-			accent = Accent.extract(image)
+			accent = extractedAccent
 
 			val id = Identifier.fromNamespaceAndPath(
 				Jukeblock.MOD_ID,

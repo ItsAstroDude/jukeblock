@@ -9,7 +9,9 @@ import net.minecraft.client.gui.GuiGraphicsExtractor
 import net.minecraft.client.gui.screens.Screen
 import net.minecraft.client.input.KeyEvent
 import net.minecraft.client.input.MouseButtonEvent
+import net.minecraft.client.renderer.RenderPipelines
 import net.minecraft.network.chat.Component
+import net.minecraft.resources.Identifier
 import org.lwjgl.glfw.GLFW
 import kotlin.math.roundToInt
 
@@ -39,18 +41,29 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		/** Never let the rail swallow a small window, whatever the GUI scale. */
 		const val RAIL_MAX_SCREEN_FRACTION = 0.42f
 
-		const val PADDING = 16
+		const val PADDING = 12
+
+		/** Gap between stacked sections. Smaller than the edge padding, or the rail reads as empty. */
+		const val SECTION_GAP = 10
+
 		const val SLIDE_MS = 180f
 
 		/** Just enough dim to lift the rail off bright terrain without hiding the game. */
 		const val BACKDROP_ALPHA = 0.15f
 
-		const val COLOR_PANEL = 0xF2131315.toInt()
-		const val COLOR_TEXT = 0xFFF2F2F5.toInt()
-		const val COLOR_TEXT_DIM = 0xFF9A9AA5.toInt()
-		const val COLOR_TEXT_FAINT = 0xFF6A6A75.toInt()
-		const val COLOR_TRACK = 0xFF2A2A30.toInt()
-		const val COLOR_DISABLED = 0xFF3A3A42.toInt()
+		// Charcoal rather than near-black: a true black slab reads as a hole punched in
+		// the screen. The faint top-to-bottom gradient gives the rail some depth.
+		const val COLOR_PANEL_TOP = 0xEE2A2A33.toInt()
+		const val COLOR_PANEL_BOTTOM = 0xEE1E1E26.toInt()
+		const val COLOR_TEXT = 0xFFF4F4F7.toInt()
+		const val COLOR_TEXT_DIM = 0xFFA8A8B4.toInt()
+		const val COLOR_TEXT_FAINT = 0xFF7A7A88.toInt()
+		const val COLOR_TRACK = 0xFF3A3A44.toInt()
+		const val COLOR_DISABLED = 0xFF4E4E58.toInt()
+
+		val ICONS: Identifier = Identifier.fromNamespaceAndPath("jukeblock", "textures/gui/icons.png")
+		const val ICON_SIZE = 16
+		const val ICON_SHEET_WIDTH = 112
 
 		const val TRANSPORT_SIZE = 30
 		const val TRANSPORT_GAP = 8
@@ -109,10 +122,19 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			mx >= x && mx < x + size && my >= y && my < y + size
 	}
 
-	private enum class Glyph { PREVIOUS, PLAY, PAUSE, NEXT, SHUFFLE, REPEAT }
+	/** `index` is the glyph's slot in icons.png — keep in step with tools/icons/make_icons.py. */
+	private enum class Glyph(val index: Int) {
+		PREVIOUS(0),
+		PLAY(1),
+		PAUSE(2),
+		NEXT(3),
+		SHUFFLE(4),
+		REPEAT(5),
+		REPEAT_ONE(6),
+	}
 
 	override fun init() {
-		if (openedAtMs == 0L) openedAtMs = System.currentTimeMillis()
+		if (openedAtMs == 0L) openedAtMs = System.nanoTime()
 		MediaService.setActive(true)
 		layout()
 	}
@@ -127,13 +149,18 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	private fun layout() {
 		railWidth = minOf(RAIL_UNITS, (width * RAIL_MAX_SCREEN_FRACTION).toInt())
 
-		val metadataHeight = font.lineHeight * 3 + 6
-		val progressHeight = PROGRESS_HEIGHT + 5 + font.lineHeight
-		// Double padding: the source indicator is pinned to the bottom edge, so without
-		// clearance the transport row lands exactly on top of it at GUI scale 4.
-		val sourceHeight = font.lineHeight + PADDING * 2
-		val reserved = PADDING + metadataHeight + PADDING + progressHeight + PADDING +
-			TRANSPORT_SIZE + PADDING + sourceHeight
+		// Mirrors the render order exactly. Metadata always reserves three lines even
+		// when a track has no album, so the art doesn't resize as tracks change — a
+		// cover that jumps size on every skip is worse than a little slack.
+		val metadata = font.lineHeight * 3 + 6
+		val progress = PROGRESS_HEIGHT + 5 + font.lineHeight
+		val source = font.lineHeight + PADDING
+
+		val reserved = PADDING + SECTION_GAP + metadata + SECTION_GAP + progress +
+			SECTION_GAP + TRANSPORT_SIZE + SECTION_GAP + source +
+			// Clearance above the pinned source line: without it the transport row lands
+			// exactly on top of it at GUI scale 4, where the screen is only ~270 units tall.
+			SECTION_GAP
 
 		artSize = minOf(railWidth - PADDING * 2, height - reserved).coerceAtLeast(0)
 	}
@@ -181,7 +208,7 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		// row, which is what a busy modpack looks like without this.
 		graphics.nextStratum()
 
-		graphics.fill(originX, 0, originX + railWidth, height, COLOR_PANEL)
+		graphics.fillGradient(originX, 0, originX + railWidth, height, COLOR_PANEL_TOP, COLOR_PANEL_BOTTOM)
 
 		val accent = AlbumArt.accent
 		// Accent hairline down the rail's edge — ties the panel to the artwork without
@@ -231,7 +258,7 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			val label = Component.translatable("jukeblock.panel.no_art")
 			graphics.centeredText(font, label, x + size / 2, top + size / 2 - font.lineHeight / 2, COLOR_TEXT_FAINT)
 		}
-		return top + size + PADDING
+		return top + size + SECTION_GAP
 	}
 
 	private fun renderMetadata(graphics: GuiGraphicsExtractor, originX: Int, top: Int, track: TrackInfo): Int {
@@ -250,7 +277,7 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			graphics.text(font, truncate(track.album, maxWidth), x, y, COLOR_TEXT_FAINT)
 			y += font.lineHeight
 		}
-		return y + PADDING
+		return y + SECTION_GAP
 	}
 
 	private fun renderProgress(
@@ -291,7 +318,7 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		val total = formatTime(track.durationMs)
 		graphics.text(font, total, x + barWidth - font.width(total), y, COLOR_TEXT_FAINT)
 
-		y += font.lineHeight + PADDING
+		y += font.lineHeight + SECTION_GAP
 		return y
 	}
 
@@ -325,7 +352,9 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		)
 		transportButtons += TransportButton(
 			MediaCommand.Repeat(nextRepeat(track.repeat)),
-			Glyph.REPEAT,
+			// Repeat-one gets its own glyph rather than a marker dot, so the three states
+			// are told apart at a glance instead of by squinting.
+			if (track.repeat == RepeatMode.TRACK) Glyph.REPEAT_ONE else Glyph.REPEAT,
 			enabled = track.supports(Capability.REPEAT),
 		)
 
@@ -345,7 +374,7 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			// hidden, so it's obvious the player is the limitation, not the mod.
 			val active = when (button.glyph) {
 				Glyph.SHUFFLE -> track.shuffle == true
-				Glyph.REPEAT -> track.repeat != null && track.repeat != RepeatMode.NONE
+				Glyph.REPEAT, Glyph.REPEAT_ONE -> track.repeat != null && track.repeat != RepeatMode.NONE
 				else -> false
 			}
 			val color = when {
@@ -356,15 +385,10 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			}
 			drawGlyph(graphics, button.glyph, button.x, button.y, button.size, color)
 
-			// Repeat-one gets a dot so it reads differently from repeat-all.
-			if (button.glyph == Glyph.REPEAT && track.repeat == RepeatMode.TRACK) {
-				graphics.fill(button.x + button.size / 2 - 1, button.y + button.size / 2 - 1, button.x + button.size / 2 + 1, button.y + button.size / 2 + 1, color)
-			}
-
 			x += TRANSPORT_SIZE + TRANSPORT_GAP
 		}
 
-		return top + TRANSPORT_SIZE + PADDING
+		return top + TRANSPORT_SIZE + SECTION_GAP
 	}
 
 	private fun renderSourceIndicator(graphics: GuiGraphicsExtractor, originX: Int, track: TrackInfo) {
@@ -380,57 +404,30 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	}
 
 	// --- glyphs ---------------------------------------------------------------
-	// Drawn from filled rectangles rather than textures: they scale with the button
-	// size, tint freely for the capability states, and add nothing to the jar.
 
+	/**
+	 * Draws one icon from the sheet, tinted.
+	 *
+	 * The icons are white pixel art and the blit multiplies by [color], which is how a
+	 * single sheet covers every state — accent when active, grey when the source doesn't
+	 * support the control. Hand-drawn rectangles were the first attempt and looked it.
+	 */
 	private fun drawGlyph(graphics: GuiGraphicsExtractor, glyph: Glyph, x: Int, y: Int, size: Int, color: Int) {
-		val cx = x + size / 2
-		val cy = y + size / 2
-		when (glyph) {
-			Glyph.PLAY -> triangleRight(graphics, cx - 4, cy, 9, color)
-			Glyph.PAUSE -> {
-				graphics.fill(cx - 5, cy - 6, cx - 1, cy + 6, color)
-				graphics.fill(cx + 1, cy - 6, cx + 5, cy + 6, color)
-			}
-			Glyph.NEXT -> {
-				triangleRight(graphics, cx - 6, cy, 7, color)
-				graphics.fill(cx + 4, cy - 6, cx + 6, cy + 6, color)
-			}
-			Glyph.PREVIOUS -> {
-				triangleLeft(graphics, cx + 6, cy, 7, color)
-				graphics.fill(cx - 6, cy - 6, cx - 4, cy + 6, color)
-			}
-			Glyph.SHUFFLE -> {
-				// Two crossing paths, suggested rather than drawn literally.
-				graphics.fill(cx - 7, cy - 4, cx - 2, cy - 2, color)
-				graphics.fill(cx - 2, cy - 4, cx + 2, cy + 2, color)
-				graphics.fill(cx + 2, cy + 2, cx + 7, cy + 4, color)
-				graphics.fill(cx - 7, cy + 2, cx - 2, cy + 4, color)
-				graphics.fill(cx + 2, cy - 4, cx + 7, cy - 2, color)
-			}
-			Glyph.REPEAT -> {
-				graphics.fill(cx - 7, cy - 5, cx + 7, cy - 3, color)
-				graphics.fill(cx - 7, cy + 3, cx + 7, cy + 5, color)
-				graphics.fill(cx - 7, cy - 5, cx - 5, cy + 5, color)
-				graphics.fill(cx + 5, cy - 5, cx + 7, cy + 5, color)
-			}
-		}
-	}
-
-	private fun triangleRight(graphics: GuiGraphicsExtractor, left: Int, centerY: Int, height: Int, color: Int) {
-		for (row in 0 until height) {
-			val distance = kotlin.math.abs(row - height / 2)
-			val length = (height / 2 - distance) + 1
-			graphics.fill(left, centerY - height / 2 + row, left + length, centerY - height / 2 + row + 1, color)
-		}
-	}
-
-	private fun triangleLeft(graphics: GuiGraphicsExtractor, right: Int, centerY: Int, height: Int, color: Int) {
-		for (row in 0 until height) {
-			val distance = kotlin.math.abs(row - height / 2)
-			val length = (height / 2 - distance) + 1
-			graphics.fill(right - length, centerY - height / 2 + row, right, centerY - height / 2 + row + 1, color)
-		}
+		val left = x + (size - ICON_SIZE) / 2
+		val top = y + (size - ICON_SIZE) / 2
+		graphics.blit(
+			RenderPipelines.GUI_TEXTURED,
+			ICONS,
+			left,
+			top,
+			(glyph.index * ICON_SIZE).toFloat(),
+			0f,
+			ICON_SIZE,
+			ICON_SIZE,
+			ICON_SHEET_WIDTH,
+			ICON_SIZE,
+			color,
+		)
 	}
 
 	// --- input ----------------------------------------------------------------
@@ -534,13 +531,13 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	private fun beginClose() {
 		if (!closing) {
 			closing = true
-			openedAtMs = System.currentTimeMillis()
+			openedAtMs = System.nanoTime()
 		}
 	}
 
 	/** Frame-rate independent: driven by wall clock, not tick count. */
 	private fun advanceSlide() {
-		val elapsed = (System.currentTimeMillis() - openedAtMs).toFloat()
+		val elapsed = (System.nanoTime() - openedAtMs) / 1_000_000f
 		val raw = (elapsed / SLIDE_MS).coerceIn(0f, 1f)
 		slide = if (closing) Accent.smoothstep(1f - raw) else Accent.smoothstep(raw)
 	}
