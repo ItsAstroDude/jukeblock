@@ -1,15 +1,16 @@
 package dev.astro.jukeblock
 
+import dev.astro.jukeblock.media.MediaService
 import net.fabricmc.api.ClientModInitializer
-import org.slf4j.LoggerFactory
-
-object Jukeblock {
-	const val MOD_ID = "jukeblock"
-	val LOGGER = LoggerFactory.getLogger(MOD_ID)!!
-}
 
 class JukeblockClient : ClientModInitializer {
 	override fun onInitializeClient() {
-		Jukeblock.LOGGER.info("Jukeblock client initialized — spinning up.")
+		MediaService.start(Jukeblock.nativeDir)
+
+		if (MediaService.isAvailable) {
+			Jukeblock.LOGGER.info("Jukeblock ready — media source: {}", MediaService.sourceName)
+		} else {
+			Jukeblock.LOGGER.info("Jukeblock ready — no system media source on this platform.")
+		}
 	}
 }

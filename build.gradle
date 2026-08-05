@@ -19,6 +19,15 @@ loom {
 	}
 }
 
+// Diagnostic harness for the media layer, run outside Minecraft. Kept out of the mod
+// jar — it exists so the SMTC bridge can be exercised without a game launch.
+sourceSets {
+	smoke {
+		compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+		runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+	}
+}
+
 dependencies {
 	// To change the versions see the gradle.properties file
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
@@ -40,6 +49,49 @@ processResources {
 	filesMatching("fabric.mod.json") {
 		expand "version": version
 	}
+}
+
+// Rebuilds the native SMTC bridge and refreshes the copy under src/main/resources.
+//
+// The built DLL is committed to the repo on purpose: it keeps `gradlew build` working
+// without a Rust toolchain, which matters for CI and for anyone who just wants to
+// compile the mod. Run this task after changing anything under native/.
+tasks.register("buildNative", Exec) {
+	description = "Compiles native/smtc-bridge and copies the DLL into src/main/resources."
+	group = "build"
+
+	workingDir = file("native/smtc-bridge")
+	commandLine "cargo", "build", "--release"
+
+	doLast {
+		copy {
+			from "native/smtc-bridge/target/release/smtc_bridge.dll"
+			into "src/main/resources/win32-x86-64"
+		}
+	}
+}
+
+tasks.register("smoke", JavaExec) {
+	description = "Exercises the media layer from a plain JVM, without launching Minecraft."
+	group = "verification"
+
+	dependsOn tasks.named("smokeClasses")
+	classpath = sourceSets.smoke.runtimeClasspath
+	mainClass = "dev.astro.jukeblock.smoke.MediaSmoke"
+
+	// JavaExec would otherwise use the Gradle daemon's JVM, which is older than the
+	// release-25 bytecode Loom's toolchain produces.
+	javaLauncher = javaToolchains.launcherFor {
+		languageVersion = JavaLanguageVersion.of(25)
+	}
+
+	// JNA's System.load is a restricted method on JDK 25; without this the run is
+	// buried in warnings. The mod itself gets the same treatment via fabric.mod.json.
+	jvmArgs "--enable-native-access=ALL-UNNAMED"
+
+	// The bridge speaks UTF-8; without this the Windows console mangles anything
+	// non-ASCII and it looks like a decoding bug that isn't there.
+	jvmArgs "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8"
 }
 
 tasks.withType(JavaCompile).configureEach {
