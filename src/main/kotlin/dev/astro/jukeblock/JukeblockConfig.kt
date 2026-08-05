@@ -69,6 +69,9 @@ data class JukeblockConfig(
 	 */
 	var hudFreeX: Float = 0.02f,
 	var hudFreeY: Float = 0.02f,
+
+	/** Overall HUD size multiplier. Set by scrolling in the drag-to-place screen. */
+	var hudScale: Float = 1.0f,
 ) {
 	val hudModeEnum: dev.astro.jukeblock.ui.HudMode
 		get() = runCatching { dev.astro.jukeblock.ui.HudMode.valueOf(hudMode) }
@@ -95,6 +98,7 @@ data class JukeblockConfig(
 		hudOffsetY = hudOffsetY.coerceIn(-400, 400),
 		hudFreeX = hudFreeX.coerceIn(0f, 1f),
 		hudFreeY = hudFreeY.coerceIn(0f, 1f),
+		hudScale = hudScale.coerceIn(0.6f, 2.5f),
 	)
 
 	companion object {

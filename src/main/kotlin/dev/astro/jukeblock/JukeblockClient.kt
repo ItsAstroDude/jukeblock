@@ -3,6 +3,7 @@ package dev.astro.jukeblock
 import com.mojang.brigadier.CommandDispatcher
 import dev.astro.jukeblock.media.MediaCommand
 import dev.astro.jukeblock.media.MediaService
+import dev.astro.jukeblock.ui.AlbumArt
 import dev.astro.jukeblock.ui.HudPositionScreen
 import dev.astro.jukeblock.ui.JukeblockKeys
 import dev.astro.jukeblock.ui.NowPlayingHud
@@ -27,6 +28,12 @@ class JukeblockClient : ClientModInitializer {
 			// even while the HUD is hidden — otherwise the first frame after it becomes
 			// visible would look like the change and toast at the wrong moment.
 			NowPlayingHud.tick()
+
+			// Album art is refreshed here, not from the panel's renderer. It used to be
+			// the panel's job, which meant that with the panel closed the HUD picked up a
+			// new title from the poll but kept the previous track's cover and accent
+			// colour — visible on every track change.
+			AlbumArt.sync(MediaService.nowPlaying)
 
 			while (JukeblockKeys.toggle.consumeClick()) {
 				// Only from in-world: opening the rail on top of another screen would

@@ -67,25 +67,27 @@ object NowPlayingHud : HudElement {
 
 	fun bounds(screenW: Int, screenH: Int): Bounds {
 		val config = JukeblockConfig.current
-		val h = ART + PAD * 2
+		val scale = config.hudScale.coerceIn(0.6f, 2.5f)
+		val w = (WIDTH * scale).toInt()
+		val h = ((ART + PAD * 2) * scale).toInt()
 
 		if (config.hudCornerEnum == HudCorner.FREE) {
 			// Stored as a fraction of the free space, so the HUD stays where it was put
 			// when the window resizes or the GUI scale changes.
-			val x = (config.hudFreeX * (screenW - WIDTH).coerceAtLeast(0)).toInt()
+			val x = (config.hudFreeX * (screenW - w).coerceAtLeast(0)).toInt()
 			val y = (config.hudFreeY * (screenH - h).coerceAtLeast(0)).toInt()
-			return Bounds(x, y, WIDTH, h)
+			return Bounds(x, y, w, h)
 		}
 
 		val x = when (config.hudCornerEnum) {
-			HudCorner.TOP_RIGHT, HudCorner.BOTTOM_RIGHT -> screenW - WIDTH - PAD
+			HudCorner.TOP_RIGHT, HudCorner.BOTTOM_RIGHT -> screenW - w - PAD
 			else -> PAD
 		} + config.hudOffsetX
 		val y = when (config.hudCornerEnum) {
 			HudCorner.BOTTOM_LEFT, HudCorner.BOTTOM_RIGHT -> screenH - h - PAD
 			else -> PAD
 		} + config.hudOffsetY
-		return Bounds(x, y, WIDTH, h)
+		return Bounds(x, y, w, h)
 	}
 
 	/** Draws the HUD regardless of mode, for the positioning screen. */
@@ -165,8 +167,16 @@ object NowPlayingHud : HudElement {
 		val height = ART + PAD * 2
 
 		val box = bounds(graphics.guiWidth(), graphics.guiHeight())
-		val x = box.x
-		val y = box.y
+		val scale = config.hudScale.coerceIn(0.6f, 2.5f)
+
+		// Scaling through the matrix rather than recomputing every offset means the font
+		// scales too — otherwise a bigger HUD would just be a bigger box around the same
+		// small text.
+		graphics.pose().pushMatrix()
+		graphics.pose().translate(box.x.toFloat(), box.y.toFloat())
+		graphics.pose().scale(scale, scale)
+		val x = 0
+		val y = 0
 
 		val accent = if (config.accentFromArt) AlbumArt.accent else (0xFF shl 24) or config.accentRgb
 		val panel = config.panelArgb
@@ -230,6 +240,8 @@ object NowPlayingHud : HudElement {
 			graphics.fill(textX, barY, textX + barW, barY + PROGRESS_H, fade(Accent.withAlpha(adapted, 0.25f)))
 			graphics.fill(textX, barY, textX + fill, barY + PROGRESS_H, fade(adapted))
 		}
+
+		graphics.pose().popMatrix()
 	}
 
 }

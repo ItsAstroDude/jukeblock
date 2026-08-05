@@ -56,6 +56,13 @@ class HudPositionScreen(private val parent: Screen?) : Screen(Component.translat
 
 		graphics.centeredText(font, Component.translatable("jukeblock.hud.position.hint"), width / 2, 12, 0xFFFFFFFF.toInt())
 		graphics.centeredText(font, Component.translatable("jukeblock.hud.position.hint2"), width / 2, 12 + font.lineHeight + 3, 0xFFA8A8B4.toInt())
+		graphics.centeredText(
+			font,
+			Component.translatable("jukeblock.hud.position.scale", "%.0f%%".format(JukeblockConfig.current.hudScale * 100)),
+			width / 2,
+			12 + (font.lineHeight + 3) * 2,
+			0xFFA8A8B4.toInt(),
+		)
 	}
 
 	override fun mouseClicked(event: MouseButtonEvent, doubleClick: Boolean): Boolean {
@@ -100,6 +107,12 @@ class HudPositionScreen(private val parent: Screen?) : Screen(Component.translat
 			return true
 		}
 		return super.mouseReleased(event)
+	}
+
+	override fun mouseScrolled(mouseX: Double, mouseY: Double, scrollX: Double, scrollY: Double): Boolean {
+		val config = JukeblockConfig.current
+		config.hudScale = (config.hudScale + if (scrollY > 0) 0.1f else -0.1f).coerceIn(0.6f, 2.5f)
+		return true
 	}
 
 	override fun keyPressed(event: KeyEvent): Boolean {

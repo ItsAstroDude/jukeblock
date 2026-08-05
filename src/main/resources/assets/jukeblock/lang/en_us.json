@@ -42,5 +42,7 @@
 	"key.jukeblock.move_hud": "Move now-playing HUD",
 	"jukeblock.hud.position.title": "Position the HUD",
 	"jukeblock.hud.position.hint": "Drag the box to place the now-playing HUD",
-	"jukeblock.hud.position.hint2": "It snaps to edges and centre. ESC when you're done."
+	"jukeblock.hud.position.hint2": "Snaps to edges and centre · scroll to resize · ESC when done",
+	"jukeblock.hud.position.scale": "Size: %s",
+	"jukeblock.config.hudPlaceHint": "§7Set Corner to FREE to place the HUD by dragging. You can reopen the placement screen any time with the \"Move now-playing HUD\" keybind."
 }

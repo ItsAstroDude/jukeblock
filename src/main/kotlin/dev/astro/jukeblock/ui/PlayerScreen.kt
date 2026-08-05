@@ -6,6 +6,7 @@ import dev.astro.jukeblock.media.MediaCommand
 import dev.astro.jukeblock.media.MediaService
 import dev.astro.jukeblock.media.RepeatMode
 import dev.astro.jukeblock.media.TrackInfo
+import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.GuiGraphicsExtractor
 import net.minecraft.client.gui.screens.Screen
 import net.minecraft.client.input.KeyEvent
@@ -69,6 +70,14 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 
 		val ICONS: Identifier = Identifier.fromNamespaceAndPath("jukeblock", "textures/gui/icons.png")
 		/** Size the glyph is drawn at, in GUI units. */
+		/**
+		 * How far album art may be enlarged beyond its own resolution.
+		 *
+		 * Past roughly this the smoothing stops looking like a photo and starts looking
+		 * like a blur, which is what browser thumbnails were doing at full rail width.
+		 */
+		const val MAX_ART_UPSCALE = 1.5f
+
 		const val ICON_SIZE = 16
 
 		/** Source resolution per glyph. 64px is 1:1 at GUI scale 4. */
@@ -254,8 +263,9 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			return
 		}
 
+		// Art is kept current by the client tick (see JukeblockClient), so it's right
+		// whether or not this panel has been open.
 		val track = MediaService.nowPlaying
-		AlbumArt.sync(track)
 
 		// Slide by offsetting every x we draw, rather than transforming the matrix —
 		// mouse hit-testing then needs no inverse transform.
@@ -334,7 +344,23 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			val srcW = AlbumArt.artWidth.coerceAtLeast(1)
 			val srcH = AlbumArt.artHeight.coerceAtLeast(1)
 			val boxW = railWidth - PADDING * 2
-			val scale = minOf(boxW.toFloat() / srcW, size.toFloat() / srcH)
+
+			// Don't blow the image up past what it actually contains. SMTC hands out
+			// whatever the player published — 300x300 from Spotify, often much less from
+			// a browser — and filling the rail with a small source just magnifies mush.
+			// The cap is in physical pixels, so it follows the GUI scale.
+			val guiScale = Minecraft.getInstance().window.let { w ->
+				if (w.guiScaledWidth > 0) w.width.toFloat() / w.guiScaledWidth else 1f
+			}.coerceAtLeast(1f)
+			val maxUnitsW = srcW * MAX_ART_UPSCALE / guiScale
+			val maxUnitsH = srcH * MAX_ART_UPSCALE / guiScale
+
+			val scale = minOf(
+				boxW.toFloat() / srcW,
+				size.toFloat() / srcH,
+				maxUnitsW / srcW,
+				maxUnitsH / srcH,
+			)
 			val drawW = (srcW * scale).toInt().coerceAtLeast(1)
 			val drawH = (srcH * scale).toInt().coerceAtLeast(1)
 			val ax = originX + (railWidth - drawW) / 2
