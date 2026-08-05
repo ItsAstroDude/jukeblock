@@ -1,0 +1,30 @@
+{
+	"schemaVersion": 1,
+	"id": "jukeblock",
+	"version": "${version}",
+	"name": "Jukeblock",
+	"description": "Universal now-playing panel for Minecraft. Works the second you install it, with no login, for whatever you're actually listening to.",
+	"authors": [
+		"ItsAstroDude"
+	],
+	"contact": {
+		"sources": "https://github.com/ItsAstroDude/jukeblock"
+	},
+	"license": "MIT",
+	"environment": "client",
+	"entrypoints": {
+		"client": [
+			{
+				"adapter": "kotlin",
+				"value": "dev.astro.jukeblock.JukeblockClient"
+			}
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~26.2",
+		"java": ">=25",
+		"fabric-api": "*",
+		"fabric-language-kotlin": ">=1.13.13"
+	}
+}
