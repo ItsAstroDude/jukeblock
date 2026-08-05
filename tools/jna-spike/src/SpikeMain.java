@@ -8,12 +8,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * Phase 0 gate: prove the Rust SMTC cdylib loads and works from a plain JVM, with no
- * Minecraft in the picture. If this doesn't work, nothing downstream can.
+ * Standalone diagnostic for the native SMTC bridge — no Minecraft involved.
+ *
+ * Originally the Phase 0 gate; kept because being able to exercise the DLL without
+ * launching the game is worth far more than the 200 lines it costs.
  *
  * Run with the DLL path as arg[0].
  */
 public class SpikeMain {
+
+    private static final int EXPECTED_ABI = 2;
 
     public interface SmtcBridge extends Library {
         int jukeblock_abi_version();
@@ -23,22 +27,23 @@ public class SpikeMain {
          * JNA would happily marshal a String for us, but then it discards the pointer
          * and we could never free it — a leak on every poll, several times a second.
          */
-        Pointer jukeblock_get_now_playing();
+        Pointer jukeblock_get_now_playing(String sourceAppId);
+
+        Pointer jukeblock_get_sessions();
 
         void jukeblock_free_string(Pointer p);
 
-        Pointer jukeblock_get_thumbnail(LongByReference outLen);
+        Pointer jukeblock_get_thumbnail(String sourceAppId, LongByReference outLen);
 
         void jukeblock_free_bytes(Pointer p, long len);
 
-        int jukeblock_control(String cmd, long arg);
+        int jukeblock_control(String sourceAppId, String cmd, long arg);
     }
 
     private static SmtcBridge lib;
 
-    /** Reads the JSON out and immediately hands the buffer back to Rust. */
-    private static String nowPlaying() {
-        Pointer p = lib.jukeblock_get_now_playing();
+    /** Reads an owned JSON string out and immediately hands the buffer back to Rust. */
+    private static String take(Pointer p) {
         if (p == null) return null;
         try {
             return p.getString(0, "UTF-8");
@@ -59,30 +64,52 @@ public class SpikeMain {
         lib = Native.load(f.getAbsolutePath(), SmtcBridge.class);
         System.out.printf("load time : %.1f ms%n", (System.nanoTime() - t0) / 1e6);
 
-        System.out.println("abi ver   : " + lib.jukeblock_abi_version());
+        int abi = lib.jukeblock_abi_version();
+        System.out.println("abi ver   : " + abi + (abi == EXPECTED_ABI ? " (ok)" : " (MISMATCH, expected " + EXPECTED_ABI + ")"));
+        if (abi != EXPECTED_ABI) {
+            System.out.println("GATE: FAILED — stale DLL");
+            System.exit(1);
+        }
+        System.out.println();
+
+        // --- enumeration -----------------------------------------------------
+        t0 = System.nanoTime();
+        String sessions = take(lib.jukeblock_get_sessions());
+        System.out.printf("sessions  : (%.1f ms)%n", (System.nanoTime() - t0) / 1e6);
+        System.out.println("  " + sessions);
         System.out.println();
 
         // --- read path -------------------------------------------------------
+        // null = whatever the system considers the current session.
         t0 = System.nanoTime();
-        String json = nowPlaying();
-        double firstCallMs = (System.nanoTime() - t0) / 1e6;
-        System.out.printf("first call: %.1f ms%n", firstCallMs);
-        System.out.println("now playing:");
+        String json = take(lib.jukeblock_get_now_playing(null));
+        System.out.printf("first call: %.1f ms%n", (System.nanoTime() - t0) / 1e6);
+        System.out.println("now playing (current session):");
         System.out.println("  " + json);
         System.out.println();
 
         // Polling cost matters: the panel wants ~500ms-1s polling, so this has to be cheap.
         int n = 20;
         t0 = System.nanoTime();
-        for (int i = 0; i < n; i++) nowPlaying();
-        double avgMs = (System.nanoTime() - t0) / 1e6 / n;
-        System.out.printf("avg of %d : %.2f ms per poll%n", n, avgMs);
+        for (int i = 0; i < n; i++) take(lib.jukeblock_get_now_playing(null));
+        System.out.printf("avg of %d : %.2f ms per poll%n", n, (System.nanoTime() - t0) / 1e6 / n);
         System.out.println();
+
+        // --- pinned read -----------------------------------------------------
+        // Prove that targeting a specific player works, independently of which session
+        // the system currently considers focused.
+        String pinned = firstSourceAppId(sessions);
+        if (pinned != null) {
+            System.out.println("pinned to : " + pinned);
+            System.out.println("  " + take(lib.jukeblock_get_now_playing(pinned)));
+            System.out.println("unknown id: " + take(lib.jukeblock_get_now_playing("no.such.player")));
+            System.out.println();
+        }
 
         // --- thumbnail path --------------------------------------------------
         LongByReference len = new LongByReference();
         t0 = System.nanoTime();
-        Pointer thumb = lib.jukeblock_get_thumbnail(len);
+        Pointer thumb = lib.jukeblock_get_thumbnail(null, len);
         double thumbMs = (System.nanoTime() - t0) / 1e6;
         if (thumb == null) {
             System.out.println("thumbnail : none");
@@ -91,8 +118,7 @@ public class SpikeMain {
                 int size = (int) len.getValue();
                 byte[] bytes = thumb.getByteArray(0, size);
                 String kind = sniff(bytes);
-                System.out.printf("thumbnail : %d bytes, %s, fetched in %.1f ms%n",
-                        size, kind, thumbMs);
+                System.out.printf("thumbnail : %d bytes, %s, fetched in %.1f ms%n", size, kind, thumbMs);
                 Path out = Path.of("thumbnail-probe." + kind.toLowerCase());
                 Files.write(out, bytes);
                 System.out.println("            written to " + out.toAbsolutePath());
@@ -105,11 +131,21 @@ public class SpikeMain {
         // --- control path ----------------------------------------------------
         // Read-only probe: an unknown command exercises the whole call path (session
         // lookup included) without actually touching the user's playback.
-        System.out.println("control(\"__probe__\") -> " + lib.jukeblock_control("__probe__", 0)
+        System.out.println("control(\"__probe__\") -> " + lib.jukeblock_control(null, "__probe__", 0)
                 + "   (0 = reached the session and declined, as expected)");
 
         System.out.println();
         System.out.println("GATE: PASSED");
+    }
+
+    /** Crude pull of the first sourceAppId — enough for a diagnostic, no JSON dep. */
+    private static String firstSourceAppId(String json) {
+        String key = "\"sourceAppId\":\"";
+        int i = json.indexOf(key);
+        if (i < 0) return null;
+        int start = i + key.length();
+        int end = json.indexOf('"', start);
+        return end < 0 ? null : json.substring(start, end);
     }
 
     private static String sniff(byte[] b) {
