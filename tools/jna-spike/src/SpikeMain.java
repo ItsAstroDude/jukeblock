@@ -17,7 +17,7 @@ import java.nio.file.Path;
  */
 public class SpikeMain {
 
-    private static final int EXPECTED_ABI = 2;
+    private static final int EXPECTED_ABI = 3;
 
     public interface SmtcBridge extends Library {
         int jukeblock_abi_version();
@@ -103,6 +103,18 @@ public class SpikeMain {
             System.out.println("pinned to : " + pinned);
             System.out.println("  " + take(lib.jukeblock_get_now_playing(pinned)));
             System.out.println("unknown id: " + take(lib.jukeblock_get_now_playing("no.such.player")));
+
+            LongByReference plen = new LongByReference();
+            Pointer pthumb = lib.jukeblock_get_thumbnail(pinned, plen);
+            if (pthumb != null) {
+                try {
+                    byte[] pb = pthumb.getByteArray(0, (int) plen.getValue());
+                    Files.write(Path.of("thumbnail-pinned." + sniff(pb).toLowerCase()), pb);
+                    System.out.println("pinned art: " + pb.length + " bytes -> thumbnail-pinned");
+                } finally {
+                    lib.jukeblock_free_bytes(pthumb, plen.getValue());
+                }
+            }
             System.out.println();
         }
 

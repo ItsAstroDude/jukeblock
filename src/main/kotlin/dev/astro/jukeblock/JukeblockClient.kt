@@ -71,6 +71,20 @@ class JukeblockClient : ClientModInitializer {
 	 */
 	private fun registerCommands() {
 		ClientCommandRegistrationCallback.EVENT.register { dispatcher: CommandDispatcher<FabricClientCommandSource>, _ ->
+			// Opens the placement screen. Exists so the config screen has something to
+			// click: Cloth has no button entry, but its text entries dispatch clicks.
+			dispatcher.register(
+				ClientCommands.literal("jukeblock").then(
+					ClientCommands.literal("hud").executes { _ ->
+						val client = net.minecraft.client.Minecraft.getInstance()
+						// Deferred: the command runs while the config screen is still
+						// closing, and setting a screen inside that would be undone.
+						client.execute { client.gui.setScreen(HudPositionScreen(null)) }
+						1
+					},
+				),
+			)
+
 			dispatcher.register(
 				ClientCommands.literal("np")
 					.executes { ctx ->
