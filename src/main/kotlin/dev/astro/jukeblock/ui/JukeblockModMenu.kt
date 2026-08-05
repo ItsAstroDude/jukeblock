@@ -74,6 +74,63 @@ class JukeblockModMenu : ModMenuApi {
 					.build(),
 			)
 
+			val hud = builder.getOrCreateCategory(Component.translatable("jukeblock.config.category.hud"))
+
+			hud.addEntry(
+				entries.startEnumSelector(
+					Component.translatable("jukeblock.config.hudMode"),
+					HudMode::class.java,
+					config.hudModeEnum,
+				)
+					.setDefaultValue(HudMode.ON_TRACK_CHANGE)
+					.setTooltip(Component.translatable("jukeblock.config.hudMode.tooltip"))
+					.setSaveConsumer { config.hudMode = it.name }
+					.build(),
+			)
+
+			hud.addEntry(
+				entries.startEnumSelector(
+					Component.translatable("jukeblock.config.hudCorner"),
+					HudCorner::class.java,
+					config.hudCornerEnum,
+				)
+					.setDefaultValue(HudCorner.TOP_LEFT)
+					.setTooltip(Component.translatable("jukeblock.config.hudCorner.tooltip"))
+					.setSaveConsumer { config.hudCorner = it.name }
+					.build(),
+			)
+
+			hud.addEntry(
+				entries.startIntSlider(Component.translatable("jukeblock.config.hudToastSeconds"), config.hudToastSeconds, 1, 15)
+					.setDefaultValue(4)
+					.setTooltip(Component.translatable("jukeblock.config.hudToastSeconds.tooltip"))
+					.setSaveConsumer { config.hudToastSeconds = it }
+					.build(),
+			)
+
+			hud.addEntry(
+				entries.startIntSlider(Component.translatable("jukeblock.config.hudOffsetX"), config.hudOffsetX, -200, 200)
+					.setDefaultValue(0)
+					.setTooltip(Component.translatable("jukeblock.config.hudOffset.tooltip"))
+					.setSaveConsumer { config.hudOffsetX = it }
+					.build(),
+			)
+
+			hud.addEntry(
+				entries.startIntSlider(Component.translatable("jukeblock.config.hudOffsetY"), config.hudOffsetY, -200, 200)
+					.setDefaultValue(0)
+					.setTooltip(Component.translatable("jukeblock.config.hudOffset.tooltip"))
+					.setSaveConsumer { config.hudOffsetY = it }
+					.build(),
+			)
+
+			hud.addEntry(
+				entries.startBooleanToggle(Component.translatable("jukeblock.config.hudHideWhenPaused"), config.hudHideWhenPaused)
+					.setDefaultValue(false)
+					.setSaveConsumer { config.hudHideWhenPaused = it }
+					.build(),
+			)
+
 			val accent = builder.getOrCreateCategory(Component.translatable("jukeblock.config.category.accent"))
 
 			accent.addEntry(

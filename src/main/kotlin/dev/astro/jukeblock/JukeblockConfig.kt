@@ -40,7 +40,35 @@ data class JukeblockConfig(
 
 	/** Smooth the album art instead of Minecraft's blocky nearest-neighbour upscale. */
 	var smoothAlbumArt: Boolean = true,
+
+	// --- corner now-playing HUD -----------------------------------------------
+	// Stored as strings so a hand-edited file reads plainly and an unknown value
+	// degrades to the default instead of refusing to parse.
+
+	/** `OFF`, `ON_TRACK_CHANGE`, or `ALWAYS`. */
+	var hudMode: String = "ON_TRACK_CHANGE",
+
+	/** `TOP_LEFT`, `TOP_RIGHT`, `BOTTOM_LEFT`, `BOTTOM_RIGHT`. */
+	var hudCorner: String = "TOP_LEFT",
+
+	/** Nudge, for dodging other mods' HUDs. */
+	var hudOffsetX: Int = 0,
+	var hudOffsetY: Int = 0,
+
+	/** How long the pop-up stays up after a track change. */
+	var hudToastSeconds: Int = 4,
+
+	/** Hide the HUD while playback is paused. */
+	var hudHideWhenPaused: Boolean = false,
 ) {
+	val hudModeEnum: dev.astro.jukeblock.ui.HudMode
+		get() = runCatching { dev.astro.jukeblock.ui.HudMode.valueOf(hudMode) }
+			.getOrDefault(dev.astro.jukeblock.ui.HudMode.ON_TRACK_CHANGE)
+
+	val hudCornerEnum: dev.astro.jukeblock.ui.HudCorner
+		get() = runCatching { dev.astro.jukeblock.ui.HudCorner.valueOf(hudCorner) }
+			.getOrDefault(dev.astro.jukeblock.ui.HudCorner.TOP_LEFT)
+
 	val panelRgb: Int get() = parseHex(panelColor, 0x2A2A33)
 	val accentRgb: Int get() = parseHex(accentColor, 0x53E076)
 
@@ -53,6 +81,9 @@ data class JukeblockConfig(
 		backdropDim = backdropDim.coerceIn(0, 100),
 		// A rail below ~120 units can't fit the transport row; above ~320 it's a wall.
 		railWidth = railWidth.coerceIn(120, 320),
+		hudToastSeconds = hudToastSeconds.coerceIn(1, 30),
+		hudOffsetX = hudOffsetX.coerceIn(-400, 400),
+		hudOffsetY = hudOffsetY.coerceIn(-400, 400),
 	)
 
 	companion object {
