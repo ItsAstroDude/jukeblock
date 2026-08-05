@@ -1,11 +1,16 @@
 //! Jukeblock — flat C ABI bridge over the Windows System Media Transport Controls.
 //!
-//! Exposes three things to the JVM side, all through a plain C ABI so JNA can bind
-//! them without any C++ name mangling or COM knowledge on the Java side:
+//! Exposes to the JVM side, all through a plain C ABI so JNA can bind them without any
+//! C++ name mangling or COM knowledge on the Java side:
 //!
-//!   * `jukeblock_get_now_playing()`  -> JSON string describing the active session
+//!   * `jukeblock_get_sessions()`     -> JSON array of every media session on the system
+//!   * `jukeblock_get_now_playing()`  -> JSON describing one session in full
 //!   * `jukeblock_get_thumbnail()`    -> raw album-art bytes (PNG/JPEG as the app supplied them)
 //!   * `jukeblock_control()`          -> play/pause/next/prev/seek/shuffle/repeat
+//!
+//! Every session-facing export takes a `source` argument: pass NULL for "whatever the
+//! system considers current", or a `sourceAppId` from `jukeblock_get_sessions` to pin
+//! the call to one specific player.
 //!
 //! Every export catches unwinds at the boundary: a panic crossing into the JVM is
 //! undefined behaviour, and taking Minecraft down over a media-player hiccup is not
@@ -26,6 +31,10 @@ use windows::Media::Control::{
 use windows::Media::MediaPlaybackAutoRepeatMode as RepeatMode;
 use windows::Storage::Streams::DataReader;
 use windows::Win32::System::Com::CoIncrementMTAUsage;
+
+/// Bumped whenever the exported signatures change, so the Java side can refuse a stale
+/// DLL rather than misread it.
+const ABI_VERSION: c_int = 2;
 
 /// SMTC is WinRT, so the calling thread needs to live in an apartment. The JVM hands
 /// us arbitrary threads (and Minecraft's render thread is emphatically not ours to
@@ -56,6 +65,11 @@ fn hstring_to_string(h: HSTRING) -> String {
     h.to_string_lossy()
 }
 
+/// Reads an optional HSTRING getter, treating "player didn't fill this in" as blank.
+fn opt_str(r: windows::core::Result<HSTRING>) -> String {
+    r.map(hstring_to_string).unwrap_or_default()
+}
+
 fn playback_status_str(s: PlaybackStatus) -> &'static str {
     match s {
         PlaybackStatus::Closed => "CLOSED",
@@ -77,38 +91,46 @@ fn repeat_mode_str(m: RepeatMode) -> &'static str {
     }
 }
 
-fn current_session() -> windows::core::Result<Option<Session>> {
+fn manager() -> windows::core::Result<SessionManager> {
     ensure_mta();
-    let manager = SessionManager::RequestAsync()?.join()?;
-    // No active session is a normal state (nothing is playing), not an error.
-    match manager.GetCurrentSession() {
-        Ok(s) => Ok(Some(s)),
-        Err(_) => Ok(None),
-    }
+    SessionManager::RequestAsync()?.join()
 }
 
-fn build_now_playing() -> windows::core::Result<Value> {
-    let session = match current_session()? {
-        Some(s) => s,
-        None => return Ok(json!({ "ok": true, "active": false })),
+/// Resolves the session a call should act on.
+///
+/// `None` means "the system's current session" — the one SMTC itself considers focused.
+/// `Some(id)` pins the call to a specific player by `SourceAppUserModelId`, so a user
+/// who picked Spotify in the UI keeps talking to Spotify even while a browser tab
+/// steals the system's idea of "current".
+fn resolve_session(target: Option<&str>) -> windows::core::Result<Option<Session>> {
+    let manager = manager()?;
+
+    let Some(id) = target else {
+        // No active session is a normal state (nothing is playing), not an error.
+        return Ok(manager.GetCurrentSession().ok());
     };
 
+    let sessions = manager.GetSessions()?;
+    for session in &sessions {
+        if opt_str(session.SourceAppUserModelId()) == id {
+            return Ok(Some(session));
+        }
+    }
+    // The requested player went away; the caller decides whether to fall back.
+    Ok(None)
+}
+
+fn describe_session(session: &Session) -> windows::core::Result<Value> {
     let props = session.TryGetMediaPropertiesAsync()?.join()?;
     let timeline = session.GetTimelineProperties()?;
     let info = session.GetPlaybackInfo()?;
-
-    // Not every player fills in every field; a missing one is blank, not fatal.
-    let s = |r: windows::core::Result<HSTRING>| r.map(hstring_to_string).unwrap_or_default();
 
     let position: TimeSpan = timeline.Position().unwrap_or_default();
     let end: TimeSpan = timeline.EndTime().unwrap_or_default();
     let start: TimeSpan = timeline.StartTime().unwrap_or_default();
 
     // Shuffle/repeat are IReference<T> — genuinely absent for players that don't support them.
-    let shuffle: Option<bool> = info
-        .IsShuffleActive()
-        .ok()
-        .and_then(|r| r.Value().ok());
+    let shuffle: Option<bool> = info.IsShuffleActive().ok().and_then(|r| r.Value().ok());
     let repeat: Option<&'static str> = info
         .AutoRepeatMode()
         .ok()
@@ -118,16 +140,12 @@ fn build_now_playing() -> windows::core::Result<Value> {
     let controls = info.Controls()?;
     let cap = |r: windows::core::Result<bool>| r.unwrap_or(false);
 
-    let thumbnail_present = props.Thumbnail().is_ok();
-
     Ok(json!({
-        "ok": true,
-        "active": true,
-        "sourceAppId": s(session.SourceAppUserModelId()),
-        "title": s(props.Title()),
-        "artist": s(props.Artist()),
-        "album": s(props.AlbumTitle()),
-        "albumArtist": s(props.AlbumArtist()),
+        "sourceAppId": opt_str(session.SourceAppUserModelId()),
+        "title": opt_str(props.Title()),
+        "artist": opt_str(props.Artist()),
+        "album": opt_str(props.AlbumTitle()),
+        "albumArtist": opt_str(props.AlbumArtist()),
         "trackNumber": props.TrackNumber().unwrap_or(0),
         "trackCount": props.AlbumTrackCount().unwrap_or(0),
         "status": playback_status_str(info.PlaybackStatus().unwrap_or(PlaybackStatus::Closed)),
@@ -140,7 +158,7 @@ fn build_now_playing() -> windows::core::Result<Value> {
             .unwrap_or(0),
         "shuffle": shuffle,
         "repeat": repeat,
-        "hasThumbnail": thumbnail_present,
+        "hasThumbnail": props.Thumbnail().is_ok(),
         "caps": {
             "play": cap(controls.IsPlayEnabled()),
             "pause": cap(controls.IsPauseEnabled()),
@@ -154,6 +172,56 @@ fn build_now_playing() -> windows::core::Result<Value> {
     }))
 }
 
+fn build_now_playing(target: Option<&str>) -> windows::core::Result<Value> {
+    let Some(session) = resolve_session(target)? else {
+        return Ok(json!({ "ok": true, "active": false }));
+    };
+
+    let mut v = describe_session(&session)?;
+    let obj = v.as_object_mut().expect("describe_session returns an object");
+    obj.insert("ok".into(), json!(true));
+    obj.insert("active".into(), json!(true));
+    Ok(v)
+}
+
+/// Lightweight listing of every session, for a source picker.
+///
+/// Deliberately thinner than [`build_now_playing`]: enough to name and identify each
+/// player, without the timeline and capability round-trips for sessions the user isn't
+/// looking at.
+fn build_sessions() -> windows::core::Result<Value> {
+    let manager = manager()?;
+    let current_id = manager
+        .GetCurrentSession()
+        .ok()
+        .map(|s| opt_str(s.SourceAppUserModelId()));
+
+    let mut out = Vec::new();
+    for session in &manager.GetSessions()? {
+        let id = opt_str(session.SourceAppUserModelId());
+        // One misbehaving player must not blank the whole list.
+        let (title, artist) = match session.TryGetMediaPropertiesAsync().and_then(|op| op.join()) {
+            Ok(p) => (opt_str(p.Title()), opt_str(p.Artist())),
+            Err(_) => (String::new(), String::new()),
+        };
+        let status = session
+            .GetPlaybackInfo()
+            .and_then(|i| i.PlaybackStatus())
+            .map(playback_status_str)
+            .unwrap_or("UNKNOWN");
+
+        out.push(json!({
+            "isCurrent": current_id.as_deref() == Some(id.as_str()),
+            "sourceAppId": id,
+            "title": title,
+            "artist": artist,
+            "status": status,
+        }));
+    }
+
+    Ok(json!({ "ok": true, "sessions": out }))
+}
+
 fn json_to_c_string(v: &Value) -> *mut c_char {
     match CString::new(v.to_string()) {
         Ok(c) => c.into_raw(),
@@ -162,16 +230,24 @@ fn json_to_c_string(v: &Value) -> *mut c_char {
     }
 }
 
-/// Returns a NUL-terminated JSON string describing the current SMTC session.
+/// Reads an optional C string argument. `None` for NULL, `Err` for invalid UTF-8.
 ///
-/// Never returns NULL except on allocation failure. Errors are reported *inside*
-/// the JSON (`{"ok": false, "error": "..."}`) so the Java side has one code path.
-///
-/// The caller owns the returned pointer and must hand it back to
-/// [`jukeblock_free_string`].
-#[no_mangle]
-pub extern "C" fn jukeblock_get_now_playing() -> *mut c_char {
-    let result = catch_unwind(AssertUnwindSafe(|| match build_now_playing() {
+/// # Safety
+/// `p` must be NULL or a valid NUL-terminated C string.
+unsafe fn opt_c_str(p: *const c_char) -> Result<Option<String>, ()> {
+    if p.is_null() {
+        return Ok(None);
+    }
+    match CStr::from_ptr(p).to_str() {
+        Ok(s) => Ok(Some(s.to_owned())),
+        Err(_) => Err(()),
+    }
+}
+
+/// Runs a fallible JSON producer, turning both WinRT errors and panics into an
+/// `{"ok": false, "error": …}` payload so the Java side has one code path.
+fn json_export(f: impl FnOnce() -> windows::core::Result<Value>) -> *mut c_char {
+    let result = catch_unwind(AssertUnwindSafe(|| match f() {
         Ok(v) => v,
         Err(e) => json!({ "ok": false, "error": e.message(), "hresult": e.code().0 }),
     }));
@@ -182,7 +258,35 @@ pub extern "C" fn jukeblock_get_now_playing() -> *mut c_char {
     }
 }
 
-/// Frees a string handed out by [`jukeblock_get_now_playing`].
+/// Returns a NUL-terminated JSON string describing one SMTC session.
+///
+/// Pass NULL for `source` to describe the system's current session, or a `sourceAppId`
+/// to pin the read to a specific player.
+///
+/// Never returns NULL except on allocation failure. The caller owns the returned
+/// pointer and must hand it back to [`jukeblock_free_string`].
+///
+/// # Safety
+/// `source` must be NULL or a valid NUL-terminated C string.
+#[no_mangle]
+pub unsafe extern "C" fn jukeblock_get_now_playing(source: *const c_char) -> *mut c_char {
+    let Ok(target) = opt_c_str(source) else {
+        return json_to_c_string(&json!({ "ok": false, "error": "source is not valid UTF-8" }));
+    };
+    json_export(|| build_now_playing(target.as_deref()))
+}
+
+/// Returns a NUL-terminated JSON string listing every media session on the system.
+///
+/// Shape: `{"ok": true, "sessions": [{"sourceAppId", "title", "artist", "status",
+/// "isCurrent"}, …]}`. The caller owns the returned pointer and must hand it back to
+/// [`jukeblock_free_string`].
+#[no_mangle]
+pub extern "C" fn jukeblock_get_sessions() -> *mut c_char {
+    json_export(build_sessions)
+}
+
+/// Frees a string handed out by this library.
 ///
 /// # Safety
 /// `ptr` must be a pointer this library returned, and must not be used afterwards.
@@ -194,15 +298,13 @@ pub unsafe extern "C" fn jukeblock_free_string(ptr: *mut c_char) {
     let _ = CString::from_raw(ptr);
 }
 
-fn read_thumbnail() -> windows::core::Result<Option<Vec<u8>>> {
-    let session = match current_session()? {
-        Some(s) => s,
-        None => return Ok(None),
+fn read_thumbnail(target: Option<&str>) -> windows::core::Result<Option<Vec<u8>>> {
+    let Some(session) = resolve_session(target)? else {
+        return Ok(None);
     };
     let props = session.TryGetMediaPropertiesAsync()?.join()?;
-    let reference = match props.Thumbnail() {
-        Ok(r) => r,
-        Err(_) => return Ok(None), // player supplied no art
+    let Ok(reference) = props.Thumbnail() else {
+        return Ok(None); // player supplied no art
     };
 
     let stream = reference.OpenReadAsync()?.join()?;
@@ -218,7 +320,7 @@ fn read_thumbnail() -> windows::core::Result<Option<Vec<u8>>> {
     Ok(Some(buf))
 }
 
-/// Writes the album-art bytes for the current track into a freshly allocated buffer.
+/// Writes the album-art bytes for a session's current track into a fresh buffer.
 ///
 /// Returns the pointer and writes the length to `out_len`; returns NULL (and length 0)
 /// when there is no session or the player supplied no art. The bytes are whatever the
@@ -228,15 +330,23 @@ fn read_thumbnail() -> windows::core::Result<Option<Vec<u8>>> {
 /// back the same length.
 ///
 /// # Safety
-/// `out_len` must be a valid, writable pointer to a `usize`.
+/// `source` must be NULL or a valid NUL-terminated C string, and `out_len` must be a
+/// valid, writable pointer to a `usize`.
 #[no_mangle]
-pub unsafe extern "C" fn jukeblock_get_thumbnail(out_len: *mut usize) -> *mut u8 {
+pub unsafe extern "C" fn jukeblock_get_thumbnail(
+    source: *const c_char,
+    out_len: *mut usize,
+) -> *mut u8 {
     if out_len.is_null() {
         return std::ptr::null_mut();
     }
     *out_len = 0;
 
-    let result = catch_unwind(AssertUnwindSafe(read_thumbnail));
+    let Ok(target) = opt_c_str(source) else {
+        return std::ptr::null_mut();
+    };
+
+    let result = catch_unwind(AssertUnwindSafe(|| read_thumbnail(target.as_deref())));
     let bytes = match result {
         Ok(Ok(Some(b))) => b,
         _ => return std::ptr::null_mut(),
@@ -261,10 +371,9 @@ pub unsafe extern "C" fn jukeblock_free_bytes(ptr: *mut u8, len: usize) {
     drop(Vec::from_raw_parts(ptr, len, len));
 }
 
-fn run_control(cmd: &str, arg: i64) -> windows::core::Result<bool> {
-    let session = match current_session()? {
-        Some(s) => s,
-        None => return Ok(false),
+fn run_control(target: Option<&str>, cmd: &str, arg: i64) -> windows::core::Result<bool> {
+    let Some(session) = resolve_session(target)? else {
+        return Ok(false);
     };
 
     // SMTC reports success as a bool: the player received the request and accepted it.
@@ -293,28 +402,34 @@ fn run_control(cmd: &str, arg: i64) -> windows::core::Result<bool> {
     Ok(ok)
 }
 
-/// Sends a transport command to the active session.
+/// Sends a transport command to a session.
 ///
-/// `cmd` is one of `play`, `pause`, `toggle`, `stop`, `next`, `previous`, `seek`,
-/// `shuffle`, `repeat`. `arg` carries the payload where one is needed: milliseconds
-/// for `seek`, 0/1 for `shuffle`, and 0/1/2 (none/track/list) for `repeat`.
+/// `source` is NULL for the current session or a `sourceAppId` to pin it. `cmd` is one
+/// of `play`, `pause`, `toggle`, `stop`, `next`, `previous`, `seek`, `shuffle`,
+/// `repeat`. `arg` carries the payload where one is needed: milliseconds for `seek`,
+/// 0/1 for `shuffle`, and 0/1/2 (none/track/list) for `repeat`.
 ///
 /// Returns 1 if the player accepted the command, 0 if it declined or there was no
 /// session, and -1 on an internal error.
 ///
 /// # Safety
-/// `cmd` must be a valid NUL-terminated C string.
+/// `cmd` must be a valid NUL-terminated C string; `source` must be NULL or one.
 #[no_mangle]
-pub unsafe extern "C" fn jukeblock_control(cmd: *const c_char, arg: i64) -> c_int {
+pub unsafe extern "C" fn jukeblock_control(
+    source: *const c_char,
+    cmd: *const c_char,
+    arg: i64,
+) -> c_int {
     if cmd.is_null() {
         return -1;
     }
-    let cmd = match CStr::from_ptr(cmd).to_str() {
-        Ok(s) => s.to_owned(),
-        Err(_) => return -1,
+    let (Ok(target), Ok(Some(cmd))) = (opt_c_str(source), opt_c_str(cmd)) else {
+        return -1;
     };
 
-    match catch_unwind(AssertUnwindSafe(|| run_control(&cmd, arg))) {
+    match catch_unwind(AssertUnwindSafe(|| {
+        run_control(target.as_deref(), &cmd, arg)
+    })) {
         Ok(Ok(true)) => 1,
         Ok(Ok(false)) => 0,
         _ => -1,
@@ -324,5 +439,5 @@ pub unsafe extern "C" fn jukeblock_control(cmd: *const c_char, arg: i64) -> c_in
 /// ABI version, so the Java side can refuse a stale DLL rather than misread it.
 #[no_mangle]
 pub extern "C" fn jukeblock_abi_version() -> c_int {
-    1
+    ABI_VERSION
 }
