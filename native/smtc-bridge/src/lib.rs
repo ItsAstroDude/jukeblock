@@ -18,7 +18,6 @@
 
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::OnceLock;
 
 use serde_json::{json, Value};
 use windows::core::HSTRING;
@@ -30,25 +29,38 @@ use windows::Media::Control::{
 };
 use windows::Media::MediaPlaybackAutoRepeatMode as RepeatMode;
 use windows::Storage::Streams::DataReader;
-use windows::Win32::System::Com::CoIncrementMTAUsage;
+use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 
 /// Bumped whenever the exported signatures change, so the Java side can refuse a stale
 /// DLL rather than misread it.
 const ABI_VERSION: c_int = 2;
 
-/// SMTC is WinRT, so the calling thread needs to live in an apartment. The JVM hands
-/// us arbitrary threads (and Minecraft's render thread is emphatically not ours to
-/// re-apartment), so instead of `RoInitialize`-ing per call we bump the process-wide
-/// implicit MTA once and never release it. Cheap, thread-agnostic, and it cannot
-/// conflict with an STA the JVM set up elsewhere.
-fn ensure_mta() {
-    static MTA: OnceLock<()> = OnceLock::new();
-    MTA.get_or_init(|| {
-        // Leaks the cookie on purpose: the MTA should outlive every call we make.
-        unsafe {
-            let _ = CoIncrementMTAUsage();
-        }
-    });
+/// SMTC is WinRT, so the calling thread needs to live in a COM apartment.
+///
+/// ⚠️ This is deliberately **per-thread**, and must stay that way.
+///
+/// The first version called `CoIncrementMTAUsage`, which creates a *process-wide*
+/// implicit MTA. That broke the host: Jukeblock initialises the bridge during mod
+/// setup, several seconds before Minecraft chooses its graphics backend, and once the
+/// process is MTA the Vulkan/DXGI init path can no longer enter a single-threaded
+/// apartment — it gets `RPC_E_CHANGED_MODE` and silently falls back to OpenGL.
+/// Confirmed against Astro's logs: five runs with the mod on OpenGL, one without it on
+/// Vulkan, same NVIDIA driver throughout.
+///
+/// Every call into this library arrives on the single `Jukeblock-Media` thread (see
+/// MediaService), so initialising that one thread's apartment is sufficient and leaves
+/// the rest of the process untouched.
+fn ensure_apartment() {
+    thread_local! {
+        static APARTMENT: () = unsafe {
+            // Result ignored on purpose: `S_FALSE` means this thread was already
+            // initialised, and `RPC_E_CHANGED_MODE` means someone else established an
+            // apartment here that we must not fight. In both cases the WinRT calls that
+            // follow report their own failures, which is where a real error belongs.
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        };
+    }
+    APARTMENT.with(|_| {});
 }
 
 /// 100-nanosecond ticks -> milliseconds.
@@ -92,7 +104,7 @@ fn repeat_mode_str(m: RepeatMode) -> &'static str {
 }
 
 fn manager() -> windows::core::Result<SessionManager> {
-    ensure_mta();
+    ensure_apartment();
     SessionManager::RequestAsync()?.join()
 }
 
