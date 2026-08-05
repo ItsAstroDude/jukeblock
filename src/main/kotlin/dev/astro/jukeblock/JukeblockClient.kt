@@ -9,6 +9,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents
 
 class JukeblockClient : ClientModInitializer {
 	override fun onInitializeClient() {
+		JukeblockConfig.load()
 		MediaService.start(Jukeblock.nativeDir)
 		JukeblockKeys.register()
 

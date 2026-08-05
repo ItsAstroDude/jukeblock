@@ -1,5 +1,6 @@
 package dev.astro.jukeblock.ui
 
+import dev.astro.jukeblock.JukeblockConfig
 import dev.astro.jukeblock.media.Capability
 import dev.astro.jukeblock.media.MediaCommand
 import dev.astro.jukeblock.media.MediaService
@@ -48,18 +49,20 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 
 		const val SLIDE_MS = 180f
 
-		/** Just enough dim to lift the rail off bright terrain without hiding the game. */
-		const val BACKDROP_ALPHA = 0.15f
+		// Text and chrome come in a light-on-dark and a dark-on-light set. Which one is
+		// used depends on the panel colour, so a user who picks a pale background still
+		// gets readable text instead of white-on-white.
+		const val TEXT_ON_DARK = 0xFFF4F4F7.toInt()
+		const val TEXT_ON_DARK_DIM = 0xFFA8A8B4.toInt()
+		const val TEXT_ON_DARK_FAINT = 0xFF7A7A88.toInt()
+		const val TEXT_ON_LIGHT = 0xFF16161A.toInt()
+		const val TEXT_ON_LIGHT_DIM = 0xFF4A4A55.toInt()
+		const val TEXT_ON_LIGHT_FAINT = 0xFF74747F.toInt()
 
-		// Charcoal rather than near-black: a true black slab reads as a hole punched in
-		// the screen. The faint top-to-bottom gradient gives the rail some depth.
-		const val COLOR_PANEL_TOP = 0xEE2A2A33.toInt()
-		const val COLOR_PANEL_BOTTOM = 0xEE1E1E26.toInt()
-		const val COLOR_TEXT = 0xFFF4F4F7.toInt()
-		const val COLOR_TEXT_DIM = 0xFFA8A8B4.toInt()
-		const val COLOR_TEXT_FAINT = 0xFF7A7A88.toInt()
-		const val COLOR_TRACK = 0xFF3A3A44.toInt()
-		const val COLOR_DISABLED = 0xFF4E4E58.toInt()
+		// Gradient endpoints. Both are fully opaque and the blend is only 6%, so the
+		// panel's own alpha shifts by well under one step of 255.
+		const val WHITE = 0xFFFFFFFF.toInt()
+		const val BLACK = 0xFF000000.toInt()
 
 		val ICONS: Identifier = Identifier.fromNamespaceAndPath("jukeblock", "textures/gui/icons.png")
 		const val ICON_SIZE = 16
@@ -108,6 +111,42 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	private var scrubbing = false
 	private var scrubFraction = 0f
 
+	// Resolved per frame from the config, so editing jukeblock.json and reopening the
+	// panel is enough to see the change.
+	private var colorText = TEXT_ON_DARK
+	private var colorTextDim = TEXT_ON_DARK_DIM
+	private var colorTextFaint = TEXT_ON_DARK_FAINT
+	private var colorTrack = 0xFF3A3A44.toInt()
+	private var colorDisabled = 0xFF4E4E58.toInt()
+
+	/**
+	 * The accent to draw with: from the album art or the user's fixed colour, then made
+	 * to stand out against the panel.
+	 *
+	 * The adaptation is why the panel colour is safe to expose as a setting — pick a red
+	 * rail while a red cover is playing and the progress fill would otherwise vanish into
+	 * the surface behind it.
+	 */
+	private fun accentFor(config: JukeblockConfig): Int {
+		val base = if (config.accentFromArt) AlbumArt.accent else (0xFF shl 24) or config.accentRgb
+		return if (config.adaptAccentToPanel) Accent.adaptTo(base, config.panelRgb) else base
+	}
+
+	/**
+	 * Picks the text/chrome palette for the configured panel colour, and derives the
+	 * track and disabled shades from it so they sit a fixed distance from the surface
+	 * rather than being hardcoded for one background.
+	 */
+	private fun resolvePalette(panel: Int) {
+		val light = Accent.isLight(panel)
+		colorText = if (light) TEXT_ON_LIGHT else TEXT_ON_DARK
+		colorTextDim = if (light) TEXT_ON_LIGHT_DIM else TEXT_ON_DARK_DIM
+		colorTextFaint = if (light) TEXT_ON_LIGHT_FAINT else TEXT_ON_DARK_FAINT
+		// Empty progress track: a step away from the surface, toward the text.
+		colorTrack = Accent.lerpColor(panel or (0xFF shl 24), colorText, 0.18f)
+		colorDisabled = Accent.lerpColor(panel or (0xFF shl 24), colorText, 0.30f)
+	}
+
 	private val transportButtons = mutableListOf<TransportButton>()
 
 	private class TransportButton(
@@ -147,7 +186,7 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	 * the panel exists for — and the cover is what gives ground on a short window.
 	 */
 	private fun layout() {
-		railWidth = minOf(RAIL_UNITS, (width * RAIL_MAX_SCREEN_FRACTION).toInt())
+		railWidth = minOf(JukeblockConfig.current.railWidth, (width * RAIL_MAX_SCREEN_FRACTION).toInt())
 
 		// Mirrors the render order exactly. Metadata always reserves three lines even
 		// when a track has no album, so the art doesn't resize as tracks change — a
@@ -180,7 +219,8 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	// The rail is drawn in extractRenderState; the default menu background would cover
 	// the world, which is exactly what we don't want.
 	override fun extractBackground(graphics: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, partialTick: Float) {
-		val dim = (BACKDROP_ALPHA * slide * 255f).toInt().coerceIn(0, 255)
+		val strength = JukeblockConfig.current.backdropDim / 100f
+		val dim = (strength * slide * 255f).toInt().coerceIn(0, 255)
 		if (dim > 0) {
 			graphics.fill(0, 0, width, height, dim shl 24)
 		}
@@ -208,9 +248,20 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		// row, which is what a busy modpack looks like without this.
 		graphics.nextStratum()
 
-		graphics.fillGradient(originX, 0, originX + railWidth, height, COLOR_PANEL_TOP, COLOR_PANEL_BOTTOM)
+		val config = JukeblockConfig.current
+		val panel = config.panelArgb
+		resolvePalette(config.panelRgb)
 
-		val accent = AlbumArt.accent
+		// Faint top-to-bottom gradient around the chosen colour, so the rail reads as a
+		// surface rather than a flat slab. Both ends derive from the user's colour, so it
+		// stays subtle whether they picked charcoal or cream.
+		graphics.fillGradient(
+			originX, 0, originX + railWidth, height,
+			Accent.lerpColor(panel, WHITE, 0.06f),
+			Accent.lerpColor(panel, BLACK, 0.06f),
+		)
+
+		val accent = accentFor(config)
 		// Accent hairline down the rail's edge — ties the panel to the artwork without
 		// putting a saturated colour anywhere near the text.
 		graphics.fill(originX + railWidth - 1, 0, originX + railWidth, height, Accent.withAlpha(accent, 0.5f))
@@ -234,7 +285,7 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		} else {
 			Component.translatable("jukeblock.panel.no_source")
 		}
-		graphics.text(font, message, originX + PADDING, height / 2 - font.lineHeight / 2, COLOR_TEXT_DIM)
+		graphics.text(font, message, originX + PADDING, height / 2 - font.lineHeight / 2, colorTextDim)
 	}
 
 	private fun renderArtwork(graphics: GuiGraphicsExtractor, originX: Int, top: Int, accent: Int): Int {
@@ -254,9 +305,9 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			// wrong rectangle.
 			graphics.blit(art, x, top, x + size, top + size, 0f, 1f, 0f, 1f)
 		} else {
-			graphics.fill(x, top, x + size, top + size, COLOR_TRACK)
+			graphics.fill(x, top, x + size, top + size, colorTrack)
 			val label = Component.translatable("jukeblock.panel.no_art")
-			graphics.centeredText(font, label, x + size / 2, top + size / 2 - font.lineHeight / 2, COLOR_TEXT_FAINT)
+			graphics.centeredText(font, label, x + size / 2, top + size / 2 - font.lineHeight / 2, colorTextFaint)
 		}
 		return top + size + SECTION_GAP
 	}
@@ -266,15 +317,15 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		val maxWidth = railWidth - PADDING * 2
 		var y = top
 
-		graphics.text(font, truncate(track.title, maxWidth), x, y, COLOR_TEXT)
+		graphics.text(font, truncate(track.title, maxWidth), x, y, colorText)
 		y += font.lineHeight + 4
 
 		if (track.artist.isNotEmpty()) {
-			graphics.text(font, truncate(track.artist, maxWidth), x, y, COLOR_TEXT_DIM)
+			graphics.text(font, truncate(track.artist, maxWidth), x, y, colorTextDim)
 			y += font.lineHeight + 2
 		}
 		if (track.album.isNotEmpty()) {
-			graphics.text(font, truncate(track.album, maxWidth), x, y, COLOR_TEXT_FAINT)
+			graphics.text(font, truncate(track.album, maxWidth), x, y, colorTextFaint)
 			y += font.lineHeight
 		}
 		return y + SECTION_GAP
@@ -299,7 +350,7 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		val fraction = if (scrubbing) scrubFraction else track.progress
 		val fillWidth = (barWidth * fraction).roundToInt().coerceIn(0, barWidth)
 
-		graphics.fill(x, top, x + barWidth, top + PROGRESS_HEIGHT, COLOR_TRACK)
+		graphics.fill(x, top, x + barWidth, top + PROGRESS_HEIGHT, colorTrack)
 		graphics.fill(x, top, x + fillWidth, top + PROGRESS_HEIGHT, accent)
 
 		// Scrub handle, shown on hover or while dragging, and only when seek is supported.
@@ -308,15 +359,15 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			mouseY >= top - PROGRESS_HIT_PAD && mouseY < top + PROGRESS_HEIGHT + PROGRESS_HIT_PAD
 		if (canSeek && (hovered || scrubbing)) {
 			val handleX = x + fillWidth
-			graphics.fill(handleX - 2, top - 3, handleX + 2, top + PROGRESS_HEIGHT + 3, COLOR_TEXT)
+			graphics.fill(handleX - 2, top - 3, handleX + 2, top + PROGRESS_HEIGHT + 3, colorText)
 		}
 
 		var y = top + PROGRESS_HEIGHT + 5
 		val elapsed = if (scrubbing) (track.durationMs * scrubFraction).toLong() else track.positionNowMs()
-		graphics.text(font, formatTime(elapsed), x, y, COLOR_TEXT_FAINT)
+		graphics.text(font, formatTime(elapsed), x, y, colorTextFaint)
 
 		val total = formatTime(track.durationMs)
-		graphics.text(font, total, x + barWidth - font.width(total), y, COLOR_TEXT_FAINT)
+		graphics.text(font, total, x + barWidth - font.width(total), y, colorTextFaint)
 
 		y += font.lineHeight + SECTION_GAP
 		return y
@@ -378,10 +429,10 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 				else -> false
 			}
 			val color = when {
-				!button.enabled -> COLOR_DISABLED
+				!button.enabled -> colorDisabled
 				active -> accent
-				hovered -> COLOR_TEXT
-				else -> COLOR_TEXT_DIM
+				hovered -> colorText
+				else -> colorTextDim
 			}
 			drawGlyph(graphics, button.glyph, button.x, button.y, button.size, color)
 
@@ -394,12 +445,12 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	private fun renderSourceIndicator(graphics: GuiGraphicsExtractor, originX: Int, track: TrackInfo) {
 		val y = height - PADDING - font.lineHeight
 		val label = Component.literal(prettySourceName(track.sourceId))
-		graphics.text(font, label, originX + PADDING, y, COLOR_TEXT_FAINT)
+		graphics.text(font, label, originX + PADDING, y, colorTextFaint)
 
 		val pinned = MediaService.pinnedSourceId != null
 		if (pinned) {
 			val marker = Component.translatable("jukeblock.panel.pinned")
-			graphics.text(font, marker, originX + railWidth - PADDING - font.width(marker), y, COLOR_TEXT_FAINT)
+			graphics.text(font, marker, originX + railWidth - PADDING - font.width(marker), y, colorTextFaint)
 		}
 	}
 
