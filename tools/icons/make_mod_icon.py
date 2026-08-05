@@ -122,9 +122,13 @@ def main():
     side = load_texture(jar, SIDE)
     top = load_texture(jar, TOP)
 
-    # 2:1 isometric cube. Sits left of centre so the notes have room upper-right.
-    cx, y0 = 114, 48
-    w, h, d = 78, 39, 82
+    # Sits left of centre so the notes have room upper-right.
+    #
+    # Not a textbook 2:1 isometric cube: that shows so much of the top face the block
+    # reads as squashed. Minecraft's own inventory block render is tilted steeper, so
+    # the top is flatter and the walls are taller than they are wide.
+    cx, y0 = 112, 40
+    w, h, d = 72, 30, 100
 
     A = (cx, y0)                    # top apex
     B = (cx + w, y0 + h)            # right corner

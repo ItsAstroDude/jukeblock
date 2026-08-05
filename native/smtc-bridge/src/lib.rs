@@ -29,11 +29,23 @@ use windows::Media::Control::{
 };
 use windows::Media::MediaPlaybackAutoRepeatMode as RepeatMode;
 use windows::Storage::Streams::DataReader;
-use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+use windows::core::Interface;
+use windows::Win32::Foundation::CloseHandle;
+use windows::Win32::Media::Audio::{
+    eConsole, eRender, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator,
+    ISimpleAudioVolume, MMDeviceEnumerator,
+};
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED,
+};
+use windows::Win32::System::Threading::{
+    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+    PROCESS_QUERY_LIMITED_INFORMATION,
+};
 
 /// Bumped whenever the exported signatures change, so the Java side can refuse a stale
 /// DLL rather than misread it.
-const ABI_VERSION: c_int = 2;
+const ABI_VERSION: c_int = 3;
 
 /// SMTC is WinRT, so the calling thread needs to live in a COM apartment.
 ///
@@ -444,6 +456,137 @@ pub unsafe extern "C" fn jukeblock_control(
     })) {
         Ok(Ok(true)) => 1,
         Ok(Ok(false)) => 0,
+        _ => -1,
+    }
+}
+
+// --- volume ---------------------------------------------------------------
+//
+// SMTC has no concept of volume, so this is a separate Windows API entirely:
+// WASAPI audio sessions. Per-application volume rather than the system master —
+// a now-playing panel that turned Minecraft's own audio down with the music
+// would be worse than having no slider at all.
+
+/// Reduces an identifier to something comparable: `Spotify.exe` and
+/// `Helium.NXYZFKH5N5QLK4VHZYCROOE6P4` both become their leading app name.
+fn normalise_app_name(raw: &str) -> String {
+    raw.rsplit(['\\', '/'])
+        .next()
+        .unwrap_or(raw)
+        .split(['!', '_', '.'])
+        .next()
+        .unwrap_or(raw)
+        .to_ascii_lowercase()
+}
+
+fn process_name(pid: u32) -> Option<String> {
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut buf = [0u16; 260];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_WIN32,
+            windows::core::PWSTR(buf.as_mut_ptr()),
+            &mut len,
+        );
+        let _ = CloseHandle(handle);
+        if ok.is_err() {
+            return None;
+        }
+        Some(String::from_utf16_lossy(&buf[..len as usize]))
+    }
+}
+
+/// Applies `action` to every audio session belonging to the target player.
+///
+/// Returns the first session's volume (0.0-1.0), or `None` when the player owns no
+/// audio session — which is normal for a paused app that has released its stream.
+fn with_audio_sessions(target: Option<&str>, set: Option<f32>) -> windows::core::Result<Option<f32>> {
+    ensure_apartment();
+
+    let enumerator: IMMDeviceEnumerator =
+        unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)? };
+    let device = unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole)? };
+    let manager: IAudioSessionManager2 = unsafe { device.Activate(CLSCTX_ALL, None)? };
+    let sessions = unsafe { manager.GetSessionEnumerator()? };
+    let count = unsafe { sessions.GetCount()? };
+
+    let wanted = target.map(normalise_app_name);
+    let mut result: Option<f32> = None;
+
+    for index in 0..count {
+        let control = unsafe { sessions.GetSession(index)? };
+        let control2: IAudioSessionControl2 = control.cast()?;
+        let pid = unsafe { control2.GetProcessId()? };
+        if pid == 0 {
+            continue; // the system sounds session
+        }
+
+        if let Some(want) = &wanted {
+            let name = match process_name(pid) {
+                Some(n) => normalise_app_name(&n),
+                None => continue,
+            };
+            // Browsers in particular run audio in a differently-named child process,
+            // so accept a prefix match either way rather than demanding equality.
+            if !(name == *want || name.starts_with(want.as_str()) || want.starts_with(&name)) {
+                continue;
+            }
+        }
+
+        let volume: ISimpleAudioVolume = control2.cast()?;
+        match set {
+            // A player can own several sessions at once; setting only the first would
+            // leave the others at the old level.
+            Some(v) => {
+                unsafe { volume.SetMasterVolume(v, std::ptr::null()) }?;
+                result = Some(v);
+            }
+            None => {
+                if result.is_none() {
+                    result = Some(unsafe { volume.GetMasterVolume()? });
+                }
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// Returns the player's volume as 0.0-1.0, or a negative value when it has no audio
+/// session (paused apps often release theirs) or the lookup failed.
+///
+/// # Safety
+/// `source` must be NULL or a valid NUL-terminated C string.
+#[no_mangle]
+pub unsafe extern "C" fn jukeblock_get_volume(source: *const c_char) -> f32 {
+    let Ok(target) = opt_c_str(source) else {
+        return -1.0;
+    };
+    match catch_unwind(AssertUnwindSafe(|| with_audio_sessions(target.as_deref(), None))) {
+        Ok(Ok(Some(v))) => v,
+        _ => -1.0,
+    }
+}
+
+/// Sets the player's volume. `value` is clamped to 0.0-1.0.
+///
+/// Returns 1 on success, 0 if the player owns no audio session, -1 on error.
+///
+/// # Safety
+/// `source` must be NULL or a valid NUL-terminated C string.
+#[no_mangle]
+pub unsafe extern "C" fn jukeblock_set_volume(source: *const c_char, value: f32) -> c_int {
+    let Ok(target) = opt_c_str(source) else {
+        return -1;
+    };
+    let clamped = value.clamp(0.0, 1.0);
+    match catch_unwind(AssertUnwindSafe(|| {
+        with_audio_sessions(target.as_deref(), Some(clamped))
+    })) {
+        Ok(Ok(Some(_))) => 1,
+        Ok(Ok(None)) => 0,
         _ => -1,
     }
 }

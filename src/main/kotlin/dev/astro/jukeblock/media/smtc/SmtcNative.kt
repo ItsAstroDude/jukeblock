@@ -27,4 +27,9 @@ internal interface SmtcNative : Library {
 	fun jukeblock_free_bytes(ptr: Pointer?, len: Long)
 
 	fun jukeblock_control(sourceAppId: String?, command: String, arg: Long): Int
+
+	/** 0.0-1.0, or negative when the player owns no audio session. */
+	fun jukeblock_get_volume(sourceAppId: String?): Float
+
+	fun jukeblock_set_volume(sourceAppId: String?, value: Float): Int
 }
