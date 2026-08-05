@@ -116,6 +116,10 @@ object AlbumArt {
 			Jukeblock.LOGGER.warn("Could not upload album art texture", e)
 			image.close()
 			clear()
+			// Remember the track anyway. clear() resets loadedKey, and without this the
+			// next frame sees "not loaded", re-requests, fails again — a native fetch
+			// every frame for as long as the track is playing.
+			loadedKey = key
 		}
 	}
 
