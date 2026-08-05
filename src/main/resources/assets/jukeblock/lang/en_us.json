@@ -10,8 +10,11 @@
 	"jukeblock.panel.no_art": "No artwork",
 	"jukeblock.panel.pinned": "pinned",
 
+	"jukeblock.np.nothing": "Nothing is playing.",
+
 	"jukeblock.config.title": "Jukeblock",
 	"jukeblock.config.category.appearance": "Appearance",
+	"jukeblock.config.category.hud": "Now playing HUD",
 	"jukeblock.config.category.accent": "Accent colour",
 
 	"jukeblock.config.panelColor": "Panel colour",
@@ -24,6 +27,17 @@
 	"jukeblock.config.railWidth.tooltip": "Width in GUI units, not pixels — at GUI scale 4 one unit is four screen pixels. Vanilla's inventory is 176 for reference.",
 	"jukeblock.config.smoothAlbumArt": "Smooth album art",
 	"jukeblock.config.smoothAlbumArt.tooltip": "Album art arrives at 300x300 and is drawn larger, so without smoothing it looks blocky. Turn off for a crunchier, more pixel-art look.",
+
+	"jukeblock.config.hudMode": "Show HUD",
+	"jukeblock.config.hudMode.tooltip": "OFF: never. ON TRACK CHANGE: pops up for a few seconds when the song changes. ALWAYS: stays on screen while something plays.",
+	"jukeblock.config.hudCorner": "Corner",
+	"jukeblock.config.hudCorner.tooltip": "Top-left by default — it's the corner vanilla leaves clear. Chat owns bottom-left, status effects top-right, the scoreboard the right edge.",
+	"jukeblock.config.hudToastSeconds": "Pop-up duration",
+	"jukeblock.config.hudToastSeconds.tooltip": "Seconds the HUD stays up after a track change.",
+	"jukeblock.config.hudOffsetX": "Nudge sideways",
+	"jukeblock.config.hudOffsetY": "Nudge vertically",
+	"jukeblock.config.hudOffset.tooltip": "For dodging other mods' HUDs. In GUI units.",
+	"jukeblock.config.hudHideWhenPaused": "Hide while paused",
 
 	"jukeblock.config.accentFromArt": "Accent from album art",
 	"jukeblock.config.accentFromArt.tooltip": "Pull the highlight colour from the current cover. When off, the fixed colour below is used.",

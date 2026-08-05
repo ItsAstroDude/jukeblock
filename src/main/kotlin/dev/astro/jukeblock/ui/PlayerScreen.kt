@@ -14,6 +14,9 @@ import net.minecraft.client.renderer.RenderPipelines
 import net.minecraft.network.chat.Component
 import net.minecraft.resources.Identifier
 import org.lwjgl.glfw.GLFW
+import java.net.URI
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import kotlin.math.roundToInt
 
 /**
@@ -165,6 +168,9 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	private var volumeDrag = 0f
 	private var volumeBarTop: Int? = null
 
+	/** Where the title line was drawn, so it can be clicked to open the track. */
+	private var titleTop: Int? = null
+
 	private class TransportButton(
 		val command: MediaCommand,
 		val glyph: Glyph,
@@ -287,7 +293,7 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 
 		var y = PADDING
 		y = renderArtwork(graphics, originX, y, accent)
-		y = renderMetadata(graphics, originX, y, track)
+		y = renderMetadata(graphics, originX, y, track, accent, overTitle(mouseX.toDouble(), mouseY.toDouble(), track))
 		y = renderProgress(graphics, originX, y, track, accent, mouseX, mouseY)
 		renderTransport(graphics, originX, y, track, accent, mouseX, mouseY)
 
@@ -348,12 +354,18 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		return top + size + SECTION_GAP
 	}
 
-	private fun renderMetadata(graphics: GuiGraphicsExtractor, originX: Int, top: Int, track: TrackInfo): Int {
+	private fun renderMetadata(graphics: GuiGraphicsExtractor, originX: Int, top: Int, track: TrackInfo, accentForHover: Int, mouseOverTitle: Boolean): Int {
 		val x = originX + PADDING
 		val maxWidth = railWidth - PADDING * 2
 		var y = top
 
-		graphics.text(font, truncate(track.title, maxWidth), x, y, colorText)
+		titleTop = y
+		val titleHovered = mouseOverTitle
+		graphics.text(font, truncate(track.title, maxWidth), x, y, if (titleHovered) accentForHover else colorText)
+		if (titleHovered) {
+			// Underline, so it's discoverable as a link rather than a secret.
+			graphics.fill(x, y + font.lineHeight, x + minOf(maxWidth, font.width(track.title)), y + font.lineHeight + 1, accentForHover)
+		}
 		y += font.lineHeight + 4
 
 		if (track.artist.isNotEmpty()) {
@@ -641,6 +653,12 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			}
 		}
 
+		val track = MediaService.nowPlaying
+		if (overTitle(mx, my, track) && track != null) {
+			openTrack(track)
+			return true
+		}
+
 		if (overVolumeBar(mx, my)) {
 			draggingVolume = true
 			volumeDrag = volumeFractionAt(mx)
@@ -648,7 +666,6 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			return true
 		}
 
-		val track = MediaService.nowPlaying
 		if (track != null && track.supports(Capability.SEEK) && overProgressBar(mx, my)) {
 			scrubbing = true
 			scrubFraction = fractionAt(mx)
@@ -711,7 +728,12 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	override fun keyPressed(event: KeyEvent): Boolean {
 		// ESC and the toggle key both dismiss, so the panel closes with whichever the
 		// player reaches for.
-		if (event.key() == GLFW.GLFW_KEY_ESCAPE || JukeblockKeys.isToggleKey(event.key())) {
+		// F1 is the screenshot-tidying key everywhere else in Minecraft; while a screen
+		// is open the game doesn't handle it, so the panel honours it itself.
+		if (event.key() == GLFW.GLFW_KEY_ESCAPE ||
+			event.key() == GLFW.GLFW_KEY_F1 ||
+			JukeblockKeys.isToggleKey(event.key())
+		) {
 			beginClose()
 			return true
 		}
@@ -733,6 +755,16 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 
 	/** Recorded during render so input uses exactly the laid-out position. */
 	private var progressBarTop: Int? = null
+
+	/** The title doubles as a link; only worth offering when there's something to open. */
+	private fun overTitle(mx: Double, my: Double, track: TrackInfo?): Boolean {
+		if (track == null || track.title.isEmpty()) return false
+		val y = titleTop ?: return false
+		val originX = (-railWidth * (1f - slide)).roundToInt()
+		val x = originX + PADDING
+		return mx >= x && mx < x + (railWidth - PADDING * 2) &&
+			my >= y && my < y + font.lineHeight
+	}
 
 	private fun overVolumeBar(mx: Double, my: Double): Boolean {
 		val band = volumeBarTop ?: return false
@@ -768,6 +800,25 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		val elapsed = (System.nanoTime() - openedAtMs) / 1_000_000f
 		val raw = (elapsed / SLIDE_MS).coerceIn(0f, 1f)
 		slide = if (closing) Accent.smoothstep(1f - raw) else Accent.smoothstep(raw)
+	}
+
+	/**
+	 * Opens the track in a browser.
+	 *
+	 * SMTC exposes no track URL — not even for Spotify — so this is a search rather than
+	 * a direct link. Routed through Minecraft's own confirm-link screen because the query
+	 * is built from metadata some other application supplied, and that shouldn't open a
+	 * browser without the player seeing where it goes.
+	 */
+	private fun openTrack(track: TrackInfo) {
+		val query = listOf(track.title, track.artist)
+			.filter { it.isNotEmpty() }
+			.joinToString(" ")
+		if (query.isBlank()) return
+
+		val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8)
+		val uri = runCatching { URI("https://open.spotify.com/search/$encoded") }.getOrNull() ?: return
+		clickUrlAction(minecraft, this, uri)
 	}
 
 	private fun nextRepeat(current: RepeatMode?): RepeatMode = when (current) {
