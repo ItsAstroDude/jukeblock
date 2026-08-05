@@ -26,7 +26,19 @@ import kotlin.math.roundToInt
 class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 
 	private companion object {
-		const val RAIL_WIDTH = 300
+		/**
+		 * Rail width in GUI units.
+		 *
+		 * ⚠️ `width`/`height` on a Screen are GUI-**scaled** units, not pixels. At GUI
+		 * scale 4 one unit is four physical pixels, so the plan's "~300 px" rail would
+		 * cover 1200 px — most of the screen. 180 units is a shade wider than the vanilla
+		 * inventory (176), which is the width Minecraft UIs have trained everyone to read.
+		 */
+		const val RAIL_UNITS = 180
+
+		/** Never let the rail swallow a small window, whatever the GUI scale. */
+		const val RAIL_MAX_SCREEN_FRACTION = 0.42f
+
 		const val PADDING = 16
 		const val SLIDE_MS = 180f
 
@@ -51,6 +63,17 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	private var closing = false
 	private var slide = 0f
 
+	/** Recomputed on init/resize — see [RAIL_UNITS]. */
+	private var railWidth = RAIL_UNITS
+
+	/**
+	 * Album art edge length. The art is the one element that can be given whatever room
+	 * is left, so it absorbs the difference between a tall window and a short one; at
+	 * GUI scale 4 the screen is only ~270 units high and a full-width square cover would
+	 * push the transport row off the bottom entirely.
+	 */
+	private var artSize = 0
+
 	/** Set while the user drags the progress bar, so polling doesn't fight the scrub. */
 	private var scrubbing = false
 	private var scrubFraction = 0f
@@ -74,6 +97,33 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	override fun init() {
 		if (openedAtMs == 0L) openedAtMs = System.currentTimeMillis()
 		MediaService.setActive(true)
+		layout()
+	}
+
+	/**
+	 * Sizes the rail and the artwork for the current window.
+	 *
+	 * Everything below the art has a fixed height, so it gets reserved first and the art
+	 * takes what remains. That way the transport row is always reachable — it's the part
+	 * the panel exists for — and the cover is what gives ground on a short window.
+	 */
+	private fun layout() {
+		railWidth = minOf(RAIL_UNITS, (width * RAIL_MAX_SCREEN_FRACTION).toInt())
+
+		val metadataHeight = font.lineHeight * 3 + 6
+		val progressHeight = PROGRESS_HEIGHT + 5 + font.lineHeight
+		// Double padding: the source indicator is pinned to the bottom edge, so without
+		// clearance the transport row lands exactly on top of it at GUI scale 4.
+		val sourceHeight = font.lineHeight + PADDING * 2
+		val reserved = PADDING + metadataHeight + PADDING + progressHeight + PADDING +
+			TRANSPORT_SIZE + PADDING + sourceHeight
+
+		artSize = minOf(railWidth - PADDING * 2, height - reserved).coerceAtLeast(0)
+	}
+
+	override fun resize(width: Int, height: Int) {
+		super.resize(width, height)
+		layout()
 	}
 
 	override fun removed() {
@@ -104,16 +154,16 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 
 		// Slide by offsetting every x we draw, rather than transforming the matrix —
 		// mouse hit-testing then needs no inverse transform.
-		val originX = (-RAIL_WIDTH * (1f - slide)).roundToInt()
+		val originX = (-railWidth * (1f - slide)).roundToInt()
 
 		super.extractRenderState(graphics, mouseX, mouseY, partialTick)
 
-		graphics.fill(originX, 0, originX + RAIL_WIDTH, height, COLOR_PANEL)
+		graphics.fill(originX, 0, originX + railWidth, height, COLOR_PANEL)
 
 		val accent = AlbumArt.accent
 		// Accent hairline down the rail's edge — ties the panel to the artwork without
 		// putting a saturated colour anywhere near the text.
-		graphics.fill(originX + RAIL_WIDTH - 1, 0, originX + RAIL_WIDTH, height, Accent.withAlpha(accent, 0.5f))
+		graphics.fill(originX + railWidth - 1, 0, originX + railWidth, height, Accent.withAlpha(accent, 0.5f))
 
 		if (track == null) {
 			renderEmpty(graphics, originX)
@@ -138,8 +188,12 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	}
 
 	private fun renderArtwork(graphics: GuiGraphicsExtractor, originX: Int, top: Int, accent: Int): Int {
-		val size = RAIL_WIDTH - PADDING * 2
-		val x = originX + PADDING
+		val size = artSize
+		// Too short a window to show a cover at all — skip it rather than draw a sliver.
+		if (size < 24) return top
+
+		// Centred: on a short window the art is narrower than the rail.
+		val x = originX + (railWidth - size) / 2
 
 		val art = AlbumArt.texture
 		if (art != null) {
@@ -159,7 +213,7 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 
 	private fun renderMetadata(graphics: GuiGraphicsExtractor, originX: Int, top: Int, track: TrackInfo): Int {
 		val x = originX + PADDING
-		val maxWidth = RAIL_WIDTH - PADDING * 2
+		val maxWidth = railWidth - PADDING * 2
 		var y = top
 
 		graphics.text(font, truncate(track.title, maxWidth), x, y, COLOR_TEXT)
@@ -186,7 +240,7 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		mouseY: Int,
 	): Int {
 		val x = originX + PADDING
-		val barWidth = RAIL_WIDTH - PADDING * 2
+		val barWidth = railWidth - PADDING * 2
 
 		// Remembered so input hit-tests the position that was actually laid out, rather
 		// than a second copy of the layout arithmetic that could drift out of sync.
@@ -253,7 +307,7 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		)
 
 		val totalWidth = transportButtons.size * TRANSPORT_SIZE + (transportButtons.size - 1) * TRANSPORT_GAP
-		var x = originX + (RAIL_WIDTH - totalWidth) / 2
+		var x = originX + (railWidth - totalWidth) / 2
 
 		for (button in transportButtons) {
 			button.x = x
@@ -298,7 +352,7 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		val pinned = MediaService.pinnedSourceId != null
 		if (pinned) {
 			val marker = Component.translatable("jukeblock.panel.pinned")
-			graphics.text(font, marker, originX + RAIL_WIDTH - PADDING - font.width(marker), y, COLOR_TEXT_FAINT)
+			graphics.text(font, marker, originX + railWidth - PADDING - font.width(marker), y, COLOR_TEXT_FAINT)
 		}
 	}
 
@@ -365,7 +419,7 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 
 		// Click-outside dismiss. Uses the rail's animated position so a click during the
 		// slide-in doesn't immediately close it again.
-		val railRight = RAIL_WIDTH + (-RAIL_WIDTH * (1f - slide))
+		val railRight = railWidth + (-railWidth * (1f - slide))
 		if (mx > railRight) {
 			beginClose()
 			return true
@@ -438,9 +492,9 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	/** Vertical band around the progress bar, matching what [renderProgress] hit-tests. */
 	private fun overProgressBar(mx: Double, my: Double): Boolean {
 		val y = progressBarTop ?: return false
-		val originX = (-RAIL_WIDTH * (1f - slide)).roundToInt()
+		val originX = (-railWidth * (1f - slide)).roundToInt()
 		val x = originX + PADDING
-		return mx >= x && mx < x + (RAIL_WIDTH - PADDING * 2) &&
+		return mx >= x && mx < x + (railWidth - PADDING * 2) &&
 			my >= y - PROGRESS_HIT_PAD && my < y + PROGRESS_HEIGHT + PROGRESS_HIT_PAD
 	}
 
@@ -448,9 +502,9 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	private var progressBarTop: Int? = null
 
 	private fun fractionAt(mx: Double): Float {
-		val originX = (-RAIL_WIDTH * (1f - slide)).roundToInt()
+		val originX = (-railWidth * (1f - slide)).roundToInt()
 		val x = originX + PADDING
-		val barWidth = RAIL_WIDTH - PADDING * 2
+		val barWidth = railWidth - PADDING * 2
 		return ((mx - x) / barWidth).toFloat().coerceIn(0f, 1f)
 	}
 
