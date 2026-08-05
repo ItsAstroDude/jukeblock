@@ -24,6 +24,11 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 object AlbumArt {
 
+	/** How many times to look again for a late thumbnail after a track change. */
+	private const val MAX_RECHECKS = 4
+
+	private const val RECHECK_INTERVAL_MS = 1_500L
+
 	/** Distinct texture ids, because reusing one id while the old texture is bound flickers. */
 	private val counter = AtomicInteger()
 
@@ -43,6 +48,28 @@ object AlbumArt {
 		private set
 
 	/**
+	 * Source dimensions of the loaded art.
+	 *
+	 * Album covers are square but browser thumbnails are 16:9, so the panel needs these
+	 * to letterbox rather than stretch — a YouTube frame squeezed into a square box
+	 * looks visibly wrong.
+	 */
+	var artWidth = 0
+		private set
+
+	var artHeight = 0
+		private set
+
+	/**
+	 * Content hash of the loaded bytes, so a re-check can tell "the player finally
+	 * updated its thumbnail" from "same image again".
+	 */
+	private var loadedHash = 0
+
+	private var loadedAtMs = 0L
+	private var recheckCount = 0
+
+	/**
 	 * Ensures the art for [track] is loaded, fetching it if the track changed.
 	 *
 	 * Safe to call every frame — it's a string compare in the common case.
@@ -54,7 +81,11 @@ object AlbumArt {
 		}
 
 		val key = track.trackKey
-		if (key == loadedKey || key == requestedKey) return
+		if (key == requestedKey) return
+		if (key == loadedKey) {
+			recheckStaleArtwork(key)
+			return
+		}
 
 		if (!track.hasThumbnail) {
 			// Player has no art for this track; drop the old one so we don't show the
@@ -64,12 +95,47 @@ object AlbumArt {
 			return
 		}
 
+		recheckCount = 0
+		fetch(key)
+	}
+
+	/**
+	 * Re-fetches shortly after a track change, in case the player was still catching up.
+	 *
+	 * Browsers update the SMTC title the moment a video changes but publish the new
+	 * thumbnail a beat later. Fetching once on the title change therefore caches the
+	 * *previous* video's image against the new track and keeps it until the track
+	 * changes again — which is exactly the "it takes it from old vids" symptom.
+	 *
+	 * A handful of re-checks, comparing content hashes, costs a few native calls per
+	 * track and only swaps the texture if the bytes actually changed.
+	 */
+	private fun recheckStaleArtwork(key: String) {
+		if (recheckCount >= MAX_RECHECKS) return
+		val now = System.currentTimeMillis()
+		if (now - loadedAtMs < RECHECK_INTERVAL_MS) return
+
+		recheckCount++
+		loadedAtMs = now
+		fetch(key)
+	}
+
+	private fun fetch(key: String) {
 		requestedKey = key
 		MediaService.requestArtwork { bytes ->
 			// Still on the media thread. Both the decode and the accent extraction happen
 			// here on purpose: extraction walks the image's whole pixel array, which for
 			// Spotify's 640x640 covers is 1.6 MB, and doing that on the render thread put
 			// a visible hitch right at the moment the panel slides in.
+			val hash = bytes?.contentHashCode() ?: 0
+
+			// Nothing changed since the last look — the common case for a re-check, and
+			// re-uploading an identical texture would flicker for no reason.
+			if (bytes != null && hash == loadedHash && key == loadedKey) {
+				requestedKey = null
+				return@requestArtwork
+			}
+
 			val decoded = decode(bytes)
 			val extractedAccent = decoded?.let {
 				try {
@@ -85,10 +151,11 @@ object AlbumArt {
 				if (requestedKey == key) {
 					requestedKey = null
 					if (decoded != null) {
-						apply(key, decoded, extractedAccent)
-					} else {
+						apply(key, decoded, extractedAccent, hash)
+					} else if (key != loadedKey) {
 						clear()
 						loadedKey = key
+						loadedAtMs = System.currentTimeMillis()
 					}
 				} else {
 					decoded?.close()
@@ -110,7 +177,7 @@ object AlbumArt {
 	}
 
 	/** Render thread only: uploads the image and swaps it in. Nothing heavy happens here. */
-	private fun apply(key: String, image: NativeImage, extractedAccent: Int) {
+	private fun apply(key: String, image: NativeImage, extractedAccent: Int, hash: Int) {
 		try {
 			accent = extractedAccent
 
@@ -130,6 +197,10 @@ object AlbumArt {
 			currentTexture = tex
 			texture = id
 			loadedKey = key
+			loadedHash = hash
+			loadedAtMs = System.currentTimeMillis()
+			artWidth = image.width
+			artHeight = image.height
 		} catch (e: Exception) {
 			Jukeblock.LOGGER.warn("Could not upload album art texture", e)
 			image.close()
@@ -138,6 +209,7 @@ object AlbumArt {
 			// next frame sees "not loaded", re-requests, fails again — a native fetch
 			// every frame for as long as the track is playing.
 			loadedKey = key
+			loadedAtMs = System.currentTimeMillis()
 		}
 	}
 
@@ -159,6 +231,9 @@ object AlbumArt {
 		releaseCurrent()
 		loadedKey = null
 		requestedKey = null
+		loadedHash = 0
+		artWidth = 0
+		artHeight = 0
 		accent = Accent.FALLBACK
 	}
 

@@ -55,6 +55,11 @@ class SmtcSource private constructor(private val bridge: SmtcBridge) : MediaSour
 	override fun control(command: MediaCommand, sourceId: String?): Boolean =
 		bridge.control(command.wire, sourceId, command.arg)
 
+	override fun volume(sourceId: String?): Float? = bridge.volume(sourceId)
+
+	override fun setVolume(value: Float, sourceId: String?): Boolean =
+		bridge.setVolume(sourceId, value)
+
 	// --- JSON decoding ---------------------------------------------------------
 	// Every field is read defensively. Players fill in wildly varying subsets of the
 	// SMTC metadata, and a browser tab missing an album must not break the panel.

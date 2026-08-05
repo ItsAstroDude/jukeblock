@@ -68,8 +68,15 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		const val ICON_SIZE = 16
 		const val ICON_SHEET_WIDTH = 112
 
-		const val TRANSPORT_SIZE = 30
-		const val TRANSPORT_GAP = 8
+		/** The three buttons actually hit mid-game get room; toggles are smaller. */
+		const val MAIN_TRANSPORT_SIZE = 38
+		const val MAIN_TRANSPORT_GAP = 14
+		const val TOGGLE_SIZE = 18
+		const val TOGGLE_ICON_SIZE = 12
+
+		const val VOLUME_HEIGHT = 4
+		const val VOLUME_HIT_PAD = 6
+		const val VOLUME_ICON_WIDTH = 12
 		const val PROGRESS_HEIGHT = 4
 		/** Generous vertical hit area — the bar itself is only 4px and hard to hit. */
 		const val PROGRESS_HIT_PAD = 6
@@ -148,13 +155,19 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	}
 
 	private val transportButtons = mutableListOf<TransportButton>()
+	private val toggleButtons = mutableListOf<TransportButton>()
+
+	/** Set while the user drags the volume bar, so polling doesn't fight the drag. */
+	private var draggingVolume = false
+	private var volumeDrag = 0f
+	private var volumeBarTop: Int? = null
 
 	private class TransportButton(
 		val command: MediaCommand,
 		val glyph: Glyph,
 		var x: Int = 0,
 		var y: Int = 0,
-		var size: Int = TRANSPORT_SIZE,
+		var size: Int = MAIN_TRANSPORT_SIZE,
 		var enabled: Boolean = true,
 	) {
 		fun contains(mx: Double, my: Double): Boolean =
@@ -196,7 +209,8 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		val source = font.lineHeight + PADDING
 
 		val reserved = PADDING + SECTION_GAP + metadata + SECTION_GAP + progress +
-			SECTION_GAP + TRANSPORT_SIZE + SECTION_GAP + source +
+			SECTION_GAP + MAIN_TRANSPORT_SIZE + SECTION_GAP +
+			VOLUME_HEIGHT + SECTION_GAP + source +
 			// Clearance above the pinned source line: without it the transport row lands
 			// exactly on top of it at GUI scale 4, where the screen is only ~270 units tall.
 			SECTION_GAP
@@ -276,7 +290,14 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		y = renderMetadata(graphics, originX, y, track)
 		y = renderProgress(graphics, originX, y, track, accent, mouseX, mouseY)
 		y = renderTransport(graphics, originX, y, track, accent, mouseX, mouseY)
+		renderVolume(graphics, originX, y, accent, mouseX, mouseY)
 		renderSourceIndicator(graphics, originX, track)
+		// Toggles share the source line, vertically centred against the text.
+		renderToggles(
+			graphics, originX,
+			height - PADDING - font.lineHeight - (TOGGLE_SIZE - font.lineHeight) / 2,
+			track, accent, mouseX, mouseY,
+		)
 	}
 
 	private fun renderEmpty(graphics: GuiGraphicsExtractor, originX: Int) {
@@ -298,12 +319,29 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 
 		val art = AlbumArt.texture
 		if (art != null) {
+			// Fit rather than fill. Album covers are square, but browser thumbnails are
+			// 16:9 and stretching one into a square box is exactly the "looks funny"
+			// artefact — letterboxing keeps the whole frame at its own proportions.
+			val srcW = AlbumArt.artWidth.coerceAtLeast(1)
+			val srcH = AlbumArt.artHeight.coerceAtLeast(1)
+			val drawW: Int
+			val drawH: Int
+			if (srcW >= srcH) {
+				drawW = size
+				drawH = (size.toLong() * srcH / srcW).toInt().coerceAtLeast(1)
+			} else {
+				drawH = size
+				drawW = (size.toLong() * srcW / srcH).toInt().coerceAtLeast(1)
+			}
+			val ax = originX + (railWidth - drawW) / 2
+			val ay = top + (size - drawH) / 2
+
 			// Soft glow behind the art, in the extracted accent.
-			graphics.fill(x - 2, top - 2, x + size + 2, top + size + 2, Accent.withAlpha(accent, 0.25f))
+			graphics.fill(ax - 2, ay - 2, ax + drawW + 2, ay + drawH + 2, Accent.withAlpha(accent, 0.25f))
 			// Edge coordinates, not x/y/width/height: this overload forwards to
 			// innerBlit(x0, x1, y0, y1). Passing a size here silently renders the
 			// wrong rectangle.
-			graphics.blit(art, x, top, x + size, top + size, 0f, 1f, 0f, 1f)
+			graphics.blit(art, ax, ay, ax + drawW, ay + drawH, 0f, 1f, 0f, 1f)
 		} else {
 			graphics.fill(x, top, x + size, top + size, colorTrack)
 			val label = Component.translatable("jukeblock.panel.no_art")
@@ -373,6 +411,14 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		return y
 	}
 
+	/**
+	 * The main transport row: previous, play/pause, next.
+	 *
+	 * Only these three live here. Shuffle and repeat are toggles rather than actions —
+	 * you set them once and forget them — so they sit on the bottom line beside the
+	 * source name, which leaves the three buttons you actually hit mid-game big and
+	 * well separated.
+	 */
 	private fun renderTransport(
 		graphics: GuiGraphicsExtractor,
 		originX: Int,
@@ -389,57 +435,139 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		// PLAY, and one that's playing advertises PAUSE.
 		val toggleCap = if (playing) Capability.PAUSE else Capability.PLAY
 
-		transportButtons += TransportButton(MediaCommand.Previous, Glyph.PREVIOUS, enabled = track.supports(Capability.PREVIOUS))
+		transportButtons += TransportButton(
+			MediaCommand.Previous, Glyph.PREVIOUS,
+			size = MAIN_TRANSPORT_SIZE, enabled = track.supports(Capability.PREVIOUS),
+		)
 		transportButtons += TransportButton(
 			MediaCommand.Toggle,
 			if (playing) Glyph.PAUSE else Glyph.PLAY,
-			enabled = track.supports(toggleCap),
+			size = MAIN_TRANSPORT_SIZE, enabled = track.supports(toggleCap),
 		)
-		transportButtons += TransportButton(MediaCommand.Next, Glyph.NEXT, enabled = track.supports(Capability.NEXT))
 		transportButtons += TransportButton(
+			MediaCommand.Next, Glyph.NEXT,
+			size = MAIN_TRANSPORT_SIZE, enabled = track.supports(Capability.NEXT),
+		)
+
+		val totalWidth = transportButtons.size * MAIN_TRANSPORT_SIZE + (transportButtons.size - 1) * MAIN_TRANSPORT_GAP
+		var x = originX + (railWidth - totalWidth) / 2
+		for (button in transportButtons) {
+			button.x = x
+			button.y = top
+			drawButton(graphics, button, track, accent, mouseX, mouseY, ICON_SIZE)
+			x += MAIN_TRANSPORT_SIZE + MAIN_TRANSPORT_GAP
+		}
+
+		return top + MAIN_TRANSPORT_SIZE + SECTION_GAP
+	}
+
+	/** Shuffle and repeat, tucked onto the source line at the bottom of the rail. */
+	private fun renderToggles(
+		graphics: GuiGraphicsExtractor,
+		originX: Int,
+		top: Int,
+		track: TrackInfo,
+		accent: Int,
+		mouseX: Int,
+		mouseY: Int,
+	) {
+		toggleButtons.clear()
+
+		toggleButtons += TransportButton(
 			MediaCommand.Shuffle(!(track.shuffle ?: false)),
 			Glyph.SHUFFLE,
-			enabled = track.supports(Capability.SHUFFLE),
+			size = TOGGLE_SIZE, enabled = track.supports(Capability.SHUFFLE),
 		)
-		transportButtons += TransportButton(
+		toggleButtons += TransportButton(
 			MediaCommand.Repeat(nextRepeat(track.repeat)),
 			// Repeat-one gets its own glyph rather than a marker dot, so the three states
 			// are told apart at a glance instead of by squinting.
 			if (track.repeat == RepeatMode.TRACK) Glyph.REPEAT_ONE else Glyph.REPEAT,
-			enabled = track.supports(Capability.REPEAT),
+			size = TOGGLE_SIZE, enabled = track.supports(Capability.REPEAT),
 		)
 
-		val totalWidth = transportButtons.size * TRANSPORT_SIZE + (transportButtons.size - 1) * TRANSPORT_GAP
-		var x = originX + (railWidth - totalWidth) / 2
-
-		for (button in transportButtons) {
+		val totalWidth = toggleButtons.size * TOGGLE_SIZE + (toggleButtons.size - 1) * 4
+		var x = originX + railWidth - PADDING - totalWidth
+		for (button in toggleButtons) {
 			button.x = x
 			button.y = top
+			drawButton(graphics, button, track, accent, mouseX, mouseY, TOGGLE_ICON_SIZE)
+			x += TOGGLE_SIZE + 4
+		}
+	}
 
-			val hovered = button.enabled && button.contains(mouseX.toDouble(), mouseY.toDouble())
-			if (hovered) {
-				graphics.fill(button.x, button.y, button.x + button.size, button.y + button.size, Accent.withAlpha(accent, 0.22f))
-			}
-
-			// Active states get the accent; unsupported controls are greyed rather than
-			// hidden, so it's obvious the player is the limitation, not the mod.
-			val active = when (button.glyph) {
-				Glyph.SHUFFLE -> track.shuffle == true
-				Glyph.REPEAT, Glyph.REPEAT_ONE -> track.repeat != null && track.repeat != RepeatMode.NONE
-				else -> false
-			}
-			val color = when {
-				!button.enabled -> colorDisabled
-				active -> accent
-				hovered -> colorText
-				else -> colorTextDim
-			}
-			drawGlyph(graphics, button.glyph, button.x, button.y, button.size, color)
-
-			x += TRANSPORT_SIZE + TRANSPORT_GAP
+	private fun drawButton(
+		graphics: GuiGraphicsExtractor,
+		button: TransportButton,
+		track: TrackInfo,
+		accent: Int,
+		mouseX: Int,
+		mouseY: Int,
+		iconSize: Int,
+	) {
+		val hovered = button.enabled && button.contains(mouseX.toDouble(), mouseY.toDouble())
+		if (hovered) {
+			graphics.fill(button.x, button.y, button.x + button.size, button.y + button.size, Accent.withAlpha(accent, 0.22f))
 		}
 
-		return top + TRANSPORT_SIZE + SECTION_GAP
+		// Active states get the accent; unsupported controls are greyed rather than
+		// hidden, so it's obvious the player is the limitation, not the mod.
+		val active = when (button.glyph) {
+			Glyph.SHUFFLE -> track.shuffle == true
+			Glyph.REPEAT, Glyph.REPEAT_ONE -> track.repeat != null && track.repeat != RepeatMode.NONE
+			else -> false
+		}
+		val color = when {
+			!button.enabled -> colorDisabled
+			active -> accent
+			hovered -> colorText
+			else -> colorTextDim
+		}
+		drawGlyph(graphics, button.glyph, button.x, button.y, button.size, color, iconSize)
+	}
+
+	/**
+	 * Per-application volume.
+	 *
+	 * Not an SMTC feature — it comes from WASAPI audio sessions, so it's hidden entirely
+	 * when the player owns none (a paused app often releases its stream). Deliberately
+	 * per-app rather than the system master: turning Minecraft's own audio down along
+	 * with the music would make it useless.
+	 */
+	private fun renderVolume(
+		graphics: GuiGraphicsExtractor,
+		originX: Int,
+		top: Int,
+		accent: Int,
+		mouseX: Int,
+		mouseY: Int,
+	): Int {
+		val level = if (draggingVolume) volumeDrag else MediaService.volume
+		if (level < 0f) {
+			volumeBarTop = null
+			return top
+		}
+		volumeBarTop = top
+
+		val x = originX + PADDING + VOLUME_ICON_WIDTH
+		val barWidth = railWidth - PADDING * 2 - VOLUME_ICON_WIDTH
+		val fill = (barWidth * level).roundToInt().coerceIn(0, barWidth)
+
+		// A small speaker mark, drawn from two rectangles — enough to label the row.
+		val cy = top + VOLUME_HEIGHT / 2
+		graphics.fill(originX + PADDING, cy - 2, originX + PADDING + 3, cy + 2, colorTextFaint)
+		graphics.fill(originX + PADDING + 3, cy - 4, originX + PADDING + 6, cy + 4, colorTextFaint)
+
+		graphics.fill(x, top, x + barWidth, top + VOLUME_HEIGHT, colorTrack)
+		graphics.fill(x, top, x + fill, top + VOLUME_HEIGHT, Accent.withAlpha(accent, 0.85f))
+
+		val hovered = mouseX >= x && mouseX < x + barWidth &&
+			mouseY >= top - VOLUME_HIT_PAD && mouseY < top + VOLUME_HEIGHT + VOLUME_HIT_PAD
+		if (hovered || draggingVolume) {
+			graphics.fill(x + fill - 2, top - 3, x + fill + 2, top + VOLUME_HEIGHT + 3, colorText)
+		}
+
+		return top + VOLUME_HEIGHT + SECTION_GAP
 	}
 
 	private fun renderSourceIndicator(graphics: GuiGraphicsExtractor, originX: Int, track: TrackInfo) {
@@ -463,9 +591,9 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	 * single sheet covers every state — accent when active, grey when the source doesn't
 	 * support the control. Hand-drawn rectangles were the first attempt and looked it.
 	 */
-	private fun drawGlyph(graphics: GuiGraphicsExtractor, glyph: Glyph, x: Int, y: Int, size: Int, color: Int) {
-		val left = x + (size - ICON_SIZE) / 2
-		val top = y + (size - ICON_SIZE) / 2
+	private fun drawGlyph(graphics: GuiGraphicsExtractor, glyph: Glyph, x: Int, y: Int, size: Int, color: Int, iconSize: Int = ICON_SIZE) {
+		val left = x + (size - iconSize) / 2
+		val top = y + (size - iconSize) / 2
 		graphics.blit(
 			RenderPipelines.GUI_TEXTURED,
 			ICONS,
@@ -473,8 +601,8 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			top,
 			(glyph.index * ICON_SIZE).toFloat(),
 			0f,
-			ICON_SIZE,
-			ICON_SIZE,
+			iconSize,
+			iconSize,
 			ICON_SHEET_WIDTH,
 			ICON_SIZE,
 			color,
@@ -496,11 +624,18 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			return true
 		}
 
-		for (button in transportButtons) {
+		for (button in transportButtons + toggleButtons) {
 			if (button.enabled && button.contains(mx, my)) {
 				MediaService.send(button.command)
 				return true
 			}
+		}
+
+		if (overVolumeBar(mx, my)) {
+			draggingVolume = true
+			volumeDrag = volumeFractionAt(mx)
+			MediaService.setVolume(volumeDrag)
+			return true
 		}
 
 		val track = MediaService.nowPlaying
@@ -514,6 +649,11 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	}
 
 	override fun mouseDragged(event: MouseButtonEvent, dragX: Double, dragY: Double): Boolean {
+		if (draggingVolume) {
+			volumeDrag = volumeFractionAt(event.x())
+			MediaService.setVolume(volumeDrag)
+			return true
+		}
 		if (scrubbing) {
 			scrubFraction = fractionAt(event.x())
 			return true
@@ -522,6 +662,10 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	}
 
 	override fun mouseReleased(event: MouseButtonEvent): Boolean {
+		if (draggingVolume) {
+			draggingVolume = false
+			return true
+		}
 		if (scrubbing) {
 			scrubbing = false
 			val track = MediaService.nowPlaying
@@ -534,6 +678,14 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	}
 
 	override fun mouseScrolled(mouseX: Double, mouseY: Double, scrollX: Double, scrollY: Double): Boolean {
+		if (overVolumeBar(mouseX, mouseY)) {
+			val current = MediaService.volume
+			if (current >= 0f) {
+				MediaService.setVolume((current + if (scrollY > 0) 0.05f else -0.05f).coerceIn(0f, 1f))
+				return true
+			}
+		}
+
 		// Scroll over the progress bar to seek (PLAN §6.5).
 		val track = MediaService.nowPlaying
 		if (track != null && track.supports(Capability.SEEK) && track.durationMs > 0 && overProgressBar(mouseX, mouseY)) {
@@ -571,6 +723,22 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 
 	/** Recorded during render so input uses exactly the laid-out position. */
 	private var progressBarTop: Int? = null
+
+	private fun overVolumeBar(mx: Double, my: Double): Boolean {
+		val y = volumeBarTop ?: return false
+		val originX = (-railWidth * (1f - slide)).roundToInt()
+		val x = originX + PADDING + VOLUME_ICON_WIDTH
+		val barWidth = railWidth - PADDING * 2 - VOLUME_ICON_WIDTH
+		return mx >= x && mx < x + barWidth &&
+			my >= y - VOLUME_HIT_PAD && my < y + VOLUME_HEIGHT + VOLUME_HIT_PAD
+	}
+
+	private fun volumeFractionAt(mx: Double): Float {
+		val originX = (-railWidth * (1f - slide)).roundToInt()
+		val x = originX + PADDING + VOLUME_ICON_WIDTH
+		val barWidth = railWidth - PADDING * 2 - VOLUME_ICON_WIDTH
+		return ((mx - x) / barWidth).toFloat().coerceIn(0f, 1f)
+	}
 
 	private fun fractionAt(mx: Double): Float {
 		val originX = (-railWidth * (1f - slide)).roundToInt()

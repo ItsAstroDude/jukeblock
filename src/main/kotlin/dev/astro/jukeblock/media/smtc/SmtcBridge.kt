@@ -67,9 +67,15 @@ internal class SmtcBridge private constructor(private val lib: SmtcNative) {
 	fun control(command: String, sourceId: String?, arg: Long): Boolean =
 		lib.jukeblock_control(sourceId, command, arg) == 1
 
+	/** 0.0-1.0, or null when the player has no audio session to control. */
+	fun volume(sourceId: String?): Float? = lib.jukeblock_get_volume(sourceId).takeIf { it >= 0f }
+
+	fun setVolume(sourceId: String?, value: Float): Boolean =
+		lib.jukeblock_set_volume(sourceId, value.coerceIn(0f, 1f)) == 1
+
 	companion object {
 		/** Must match `ABI_VERSION` in `native/smtc-bridge/src/lib.rs`. */
-		private const val EXPECTED_ABI = 2
+		private const val EXPECTED_ABI = 3
 
 		private const val LIBRARY_NAME = "smtc_bridge"
 

@@ -53,6 +53,10 @@ object MediaSmoke {
 		}
 		println()
 
+		val vol = MediaService.volume
+		println("volume: " + (if (vol < 0f) "no audio session for this player" else "${(vol * 100).toInt()}%"))
+		println()
+
 		// Position interpolation: SMTC only reports on events, so the panel extrapolates
 		// between polls. If this doesn't advance, the progress bar will visibly stutter.
 		println("interpolated position over 2s:")

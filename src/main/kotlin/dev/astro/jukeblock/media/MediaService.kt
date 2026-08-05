@@ -49,6 +49,17 @@ object MediaService {
 		private set
 
 	/**
+	 * Player volume 0.0-1.0, or -1 when the player owns no audio session.
+	 *
+	 * Read on the session-scan cadence rather than every poll: it enumerates every
+	 * audio session on the endpoint and opens a handle per process, which is far more
+	 * work than a now-playing read and changes far less often.
+	 */
+	@Volatile
+	var volume: Float = -1f
+		private set
+
+	/**
 	 * The player the user pinned, or null to follow whatever Windows considers current.
 	 *
 	 * Worth pinning: SMTC's "current session" follows system focus, so a background
@@ -120,6 +131,22 @@ object MediaService {
 		}
 	}
 
+	/**
+	 * Sets the player's volume, off-thread.
+	 *
+	 * Publishes the requested value immediately so the slider doesn't snap back while
+	 * the native call is still in flight.
+	 */
+	fun setVolume(value: Float) {
+		val src = source ?: return
+		val clamped = value.coerceIn(0f, 1f)
+		volume = clamped
+		submit {
+			src.setVolume(clamped, pinnedSourceId)
+			volume = src.volume(pinnedSourceId) ?: -1f
+		}
+	}
+
 	/** Fetches album art off-thread and hands the bytes to [consumer] on that thread. */
 	fun requestArtwork(consumer: (ByteArray?) -> Unit) {
 		val src = source ?: return consumer(null)
@@ -182,6 +209,7 @@ object MediaService {
 		if (now - lastSessionScan >= SESSION_SCAN_EVERY_MS) {
 			lastSessionScan = now
 			sessions = src.sessions()
+			volume = src.volume(pinnedSourceId) ?: -1f
 		}
 	}
 }
