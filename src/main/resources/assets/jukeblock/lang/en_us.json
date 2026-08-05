@@ -1,0 +1,12 @@
+{
+	"key.jukeblock.toggle": "Open Jukeblock panel",
+	"key.jukeblock.play_pause": "Play / pause",
+	"key.jukeblock.next": "Next track",
+	"key.jukeblock.previous": "Previous track",
+
+	"jukeblock.panel.title": "Jukeblock",
+	"jukeblock.panel.nothing_playing": "Nothing playing",
+	"jukeblock.panel.no_source": "No media source on this system",
+	"jukeblock.panel.no_art": "No artwork",
+	"jukeblock.panel.pinned": "pinned"
+}

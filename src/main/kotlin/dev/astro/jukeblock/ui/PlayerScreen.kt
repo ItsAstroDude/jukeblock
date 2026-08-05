@@ -1,0 +1,504 @@
+package dev.astro.jukeblock.ui
+
+import dev.astro.jukeblock.media.Capability
+import dev.astro.jukeblock.media.MediaCommand
+import dev.astro.jukeblock.media.MediaService
+import dev.astro.jukeblock.media.RepeatMode
+import dev.astro.jukeblock.media.TrackInfo
+import net.minecraft.client.gui.GuiGraphicsExtractor
+import net.minecraft.client.gui.screens.Screen
+import net.minecraft.client.input.KeyEvent
+import net.minecraft.client.input.MouseButtonEvent
+import net.minecraft.network.chat.Component
+import org.lwjgl.glfw.GLFW
+import kotlin.math.roundToInt
+
+/**
+ * The Jukeblock panel: a full-height rail on the left edge.
+ *
+ * A rail rather than a floating card, deliberately — lyrics (Phase 2) and queue/search
+ * (Phase 5) need somewhere to live, and a card would have to be redesigned to fit them.
+ *
+ * The game keeps running behind it ([isPauseScreen] is false), so this is opened and
+ * closed constantly; everything about it is tuned for that. The slide is ~180 ms because
+ * CosmicNotify's 400 ms felt sluggish for something you hit between fights.
+ */
+class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
+
+	private companion object {
+		const val RAIL_WIDTH = 300
+		const val PADDING = 16
+		const val SLIDE_MS = 180f
+
+		/** Just enough dim to lift the rail off bright terrain without hiding the game. */
+		const val BACKDROP_ALPHA = 0.15f
+
+		const val COLOR_PANEL = 0xF2131315.toInt()
+		const val COLOR_TEXT = 0xFFF2F2F5.toInt()
+		const val COLOR_TEXT_DIM = 0xFF9A9AA5.toInt()
+		const val COLOR_TEXT_FAINT = 0xFF6A6A75.toInt()
+		const val COLOR_TRACK = 0xFF2A2A30.toInt()
+		const val COLOR_DISABLED = 0xFF3A3A42.toInt()
+
+		const val TRANSPORT_SIZE = 30
+		const val TRANSPORT_GAP = 8
+		const val PROGRESS_HEIGHT = 4
+		/** Generous vertical hit area — the bar itself is only 4px and hard to hit. */
+		const val PROGRESS_HIT_PAD = 6
+	}
+
+	private var openedAtMs = 0L
+	private var closing = false
+	private var slide = 0f
+
+	/** Set while the user drags the progress bar, so polling doesn't fight the scrub. */
+	private var scrubbing = false
+	private var scrubFraction = 0f
+
+	private val transportButtons = mutableListOf<TransportButton>()
+
+	private class TransportButton(
+		val command: MediaCommand,
+		val glyph: Glyph,
+		var x: Int = 0,
+		var y: Int = 0,
+		var size: Int = TRANSPORT_SIZE,
+		var enabled: Boolean = true,
+	) {
+		fun contains(mx: Double, my: Double): Boolean =
+			mx >= x && mx < x + size && my >= y && my < y + size
+	}
+
+	private enum class Glyph { PREVIOUS, PLAY, PAUSE, NEXT, SHUFFLE, REPEAT }
+
+	override fun init() {
+		if (openedAtMs == 0L) openedAtMs = System.currentTimeMillis()
+		MediaService.setActive(true)
+	}
+
+	override fun removed() {
+		MediaService.setActive(false)
+	}
+
+	/** The whole point of the panel: the game must not pause behind it. */
+	override fun isPauseScreen(): Boolean = false
+
+	// The rail is drawn in extractRenderState; the default menu background would cover
+	// the world, which is exactly what we don't want.
+	override fun extractBackground(graphics: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, partialTick: Float) {
+		val dim = (BACKDROP_ALPHA * slide * 255f).toInt().coerceIn(0, 255)
+		if (dim > 0) {
+			graphics.fill(0, 0, width, height, dim shl 24)
+		}
+	}
+
+	override fun extractRenderState(graphics: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, partialTick: Float) {
+		advanceSlide()
+		if (closing && slide <= 0f) {
+			minecraft.gui.setScreen(null)
+			return
+		}
+
+		val track = MediaService.nowPlaying
+		AlbumArt.sync(track)
+
+		// Slide by offsetting every x we draw, rather than transforming the matrix —
+		// mouse hit-testing then needs no inverse transform.
+		val originX = (-RAIL_WIDTH * (1f - slide)).roundToInt()
+
+		super.extractRenderState(graphics, mouseX, mouseY, partialTick)
+
+		graphics.fill(originX, 0, originX + RAIL_WIDTH, height, COLOR_PANEL)
+
+		val accent = AlbumArt.accent
+		// Accent hairline down the rail's edge — ties the panel to the artwork without
+		// putting a saturated colour anywhere near the text.
+		graphics.fill(originX + RAIL_WIDTH - 1, 0, originX + RAIL_WIDTH, height, Accent.withAlpha(accent, 0.5f))
+
+		if (track == null) {
+			renderEmpty(graphics, originX)
+			return
+		}
+
+		var y = PADDING
+		y = renderArtwork(graphics, originX, y, accent)
+		y = renderMetadata(graphics, originX, y, track)
+		y = renderProgress(graphics, originX, y, track, accent, mouseX, mouseY)
+		y = renderTransport(graphics, originX, y, track, accent, mouseX, mouseY)
+		renderSourceIndicator(graphics, originX, track)
+	}
+
+	private fun renderEmpty(graphics: GuiGraphicsExtractor, originX: Int) {
+		val message = if (MediaService.isAvailable) {
+			Component.translatable("jukeblock.panel.nothing_playing")
+		} else {
+			Component.translatable("jukeblock.panel.no_source")
+		}
+		graphics.text(font, message, originX + PADDING, height / 2 - font.lineHeight / 2, COLOR_TEXT_DIM)
+	}
+
+	private fun renderArtwork(graphics: GuiGraphicsExtractor, originX: Int, top: Int, accent: Int): Int {
+		val size = RAIL_WIDTH - PADDING * 2
+		val x = originX + PADDING
+
+		val art = AlbumArt.texture
+		if (art != null) {
+			// Soft glow behind the art, in the extracted accent.
+			graphics.fill(x - 2, top - 2, x + size + 2, top + size + 2, Accent.withAlpha(accent, 0.25f))
+			// Edge coordinates, not x/y/width/height: this overload forwards to
+			// innerBlit(x0, x1, y0, y1). Passing a size here silently renders the
+			// wrong rectangle.
+			graphics.blit(art, x, top, x + size, top + size, 0f, 1f, 0f, 1f)
+		} else {
+			graphics.fill(x, top, x + size, top + size, COLOR_TRACK)
+			val label = Component.translatable("jukeblock.panel.no_art")
+			graphics.centeredText(font, label, x + size / 2, top + size / 2 - font.lineHeight / 2, COLOR_TEXT_FAINT)
+		}
+		return top + size + PADDING
+	}
+
+	private fun renderMetadata(graphics: GuiGraphicsExtractor, originX: Int, top: Int, track: TrackInfo): Int {
+		val x = originX + PADDING
+		val maxWidth = RAIL_WIDTH - PADDING * 2
+		var y = top
+
+		graphics.text(font, truncate(track.title, maxWidth), x, y, COLOR_TEXT)
+		y += font.lineHeight + 4
+
+		if (track.artist.isNotEmpty()) {
+			graphics.text(font, truncate(track.artist, maxWidth), x, y, COLOR_TEXT_DIM)
+			y += font.lineHeight + 2
+		}
+		if (track.album.isNotEmpty()) {
+			graphics.text(font, truncate(track.album, maxWidth), x, y, COLOR_TEXT_FAINT)
+			y += font.lineHeight
+		}
+		return y + PADDING
+	}
+
+	private fun renderProgress(
+		graphics: GuiGraphicsExtractor,
+		originX: Int,
+		top: Int,
+		track: TrackInfo,
+		accent: Int,
+		mouseX: Int,
+		mouseY: Int,
+	): Int {
+		val x = originX + PADDING
+		val barWidth = RAIL_WIDTH - PADDING * 2
+
+		// Remembered so input hit-tests the position that was actually laid out, rather
+		// than a second copy of the layout arithmetic that could drift out of sync.
+		progressBarTop = top
+
+		val fraction = if (scrubbing) scrubFraction else track.progress
+		val fillWidth = (barWidth * fraction).roundToInt().coerceIn(0, barWidth)
+
+		graphics.fill(x, top, x + barWidth, top + PROGRESS_HEIGHT, COLOR_TRACK)
+		graphics.fill(x, top, x + fillWidth, top + PROGRESS_HEIGHT, accent)
+
+		// Scrub handle, shown on hover or while dragging, and only when seek is supported.
+		val canSeek = track.supports(Capability.SEEK)
+		val hovered = mouseX >= x && mouseX < x + barWidth &&
+			mouseY >= top - PROGRESS_HIT_PAD && mouseY < top + PROGRESS_HEIGHT + PROGRESS_HIT_PAD
+		if (canSeek && (hovered || scrubbing)) {
+			val handleX = x + fillWidth
+			graphics.fill(handleX - 2, top - 3, handleX + 2, top + PROGRESS_HEIGHT + 3, COLOR_TEXT)
+		}
+
+		var y = top + PROGRESS_HEIGHT + 5
+		val elapsed = if (scrubbing) (track.durationMs * scrubFraction).toLong() else track.positionNowMs()
+		graphics.text(font, formatTime(elapsed), x, y, COLOR_TEXT_FAINT)
+
+		val total = formatTime(track.durationMs)
+		graphics.text(font, total, x + barWidth - font.width(total), y, COLOR_TEXT_FAINT)
+
+		y += font.lineHeight + PADDING
+		return y
+	}
+
+	private fun renderTransport(
+		graphics: GuiGraphicsExtractor,
+		originX: Int,
+		top: Int,
+		track: TrackInfo,
+		accent: Int,
+		mouseX: Int,
+		mouseY: Int,
+	): Int {
+		transportButtons.clear()
+
+		val playing = track.status.isPlaying
+		// Toggle needs whichever half applies right now: a player that's paused advertises
+		// PLAY, and one that's playing advertises PAUSE.
+		val toggleCap = if (playing) Capability.PAUSE else Capability.PLAY
+
+		transportButtons += TransportButton(MediaCommand.Previous, Glyph.PREVIOUS, enabled = track.supports(Capability.PREVIOUS))
+		transportButtons += TransportButton(
+			MediaCommand.Toggle,
+			if (playing) Glyph.PAUSE else Glyph.PLAY,
+			enabled = track.supports(toggleCap),
+		)
+		transportButtons += TransportButton(MediaCommand.Next, Glyph.NEXT, enabled = track.supports(Capability.NEXT))
+		transportButtons += TransportButton(
+			MediaCommand.Shuffle(!(track.shuffle ?: false)),
+			Glyph.SHUFFLE,
+			enabled = track.supports(Capability.SHUFFLE),
+		)
+		transportButtons += TransportButton(
+			MediaCommand.Repeat(nextRepeat(track.repeat)),
+			Glyph.REPEAT,
+			enabled = track.supports(Capability.REPEAT),
+		)
+
+		val totalWidth = transportButtons.size * TRANSPORT_SIZE + (transportButtons.size - 1) * TRANSPORT_GAP
+		var x = originX + (RAIL_WIDTH - totalWidth) / 2
+
+		for (button in transportButtons) {
+			button.x = x
+			button.y = top
+
+			val hovered = button.enabled && button.contains(mouseX.toDouble(), mouseY.toDouble())
+			if (hovered) {
+				graphics.fill(button.x, button.y, button.x + button.size, button.y + button.size, Accent.withAlpha(accent, 0.22f))
+			}
+
+			// Active states get the accent; unsupported controls are greyed rather than
+			// hidden, so it's obvious the player is the limitation, not the mod.
+			val active = when (button.glyph) {
+				Glyph.SHUFFLE -> track.shuffle == true
+				Glyph.REPEAT -> track.repeat != null && track.repeat != RepeatMode.NONE
+				else -> false
+			}
+			val color = when {
+				!button.enabled -> COLOR_DISABLED
+				active -> accent
+				hovered -> COLOR_TEXT
+				else -> COLOR_TEXT_DIM
+			}
+			drawGlyph(graphics, button.glyph, button.x, button.y, button.size, color)
+
+			// Repeat-one gets a dot so it reads differently from repeat-all.
+			if (button.glyph == Glyph.REPEAT && track.repeat == RepeatMode.TRACK) {
+				graphics.fill(button.x + button.size / 2 - 1, button.y + button.size / 2 - 1, button.x + button.size / 2 + 1, button.y + button.size / 2 + 1, color)
+			}
+
+			x += TRANSPORT_SIZE + TRANSPORT_GAP
+		}
+
+		return top + TRANSPORT_SIZE + PADDING
+	}
+
+	private fun renderSourceIndicator(graphics: GuiGraphicsExtractor, originX: Int, track: TrackInfo) {
+		val y = height - PADDING - font.lineHeight
+		val label = Component.literal(prettySourceName(track.sourceId))
+		graphics.text(font, label, originX + PADDING, y, COLOR_TEXT_FAINT)
+
+		val pinned = MediaService.pinnedSourceId != null
+		if (pinned) {
+			val marker = Component.translatable("jukeblock.panel.pinned")
+			graphics.text(font, marker, originX + RAIL_WIDTH - PADDING - font.width(marker), y, COLOR_TEXT_FAINT)
+		}
+	}
+
+	// --- glyphs ---------------------------------------------------------------
+	// Drawn from filled rectangles rather than textures: they scale with the button
+	// size, tint freely for the capability states, and add nothing to the jar.
+
+	private fun drawGlyph(graphics: GuiGraphicsExtractor, glyph: Glyph, x: Int, y: Int, size: Int, color: Int) {
+		val cx = x + size / 2
+		val cy = y + size / 2
+		when (glyph) {
+			Glyph.PLAY -> triangleRight(graphics, cx - 4, cy, 9, color)
+			Glyph.PAUSE -> {
+				graphics.fill(cx - 5, cy - 6, cx - 1, cy + 6, color)
+				graphics.fill(cx + 1, cy - 6, cx + 5, cy + 6, color)
+			}
+			Glyph.NEXT -> {
+				triangleRight(graphics, cx - 6, cy, 7, color)
+				graphics.fill(cx + 4, cy - 6, cx + 6, cy + 6, color)
+			}
+			Glyph.PREVIOUS -> {
+				triangleLeft(graphics, cx + 6, cy, 7, color)
+				graphics.fill(cx - 6, cy - 6, cx - 4, cy + 6, color)
+			}
+			Glyph.SHUFFLE -> {
+				// Two crossing paths, suggested rather than drawn literally.
+				graphics.fill(cx - 7, cy - 4, cx - 2, cy - 2, color)
+				graphics.fill(cx - 2, cy - 4, cx + 2, cy + 2, color)
+				graphics.fill(cx + 2, cy + 2, cx + 7, cy + 4, color)
+				graphics.fill(cx - 7, cy + 2, cx - 2, cy + 4, color)
+				graphics.fill(cx + 2, cy - 4, cx + 7, cy - 2, color)
+			}
+			Glyph.REPEAT -> {
+				graphics.fill(cx - 7, cy - 5, cx + 7, cy - 3, color)
+				graphics.fill(cx - 7, cy + 3, cx + 7, cy + 5, color)
+				graphics.fill(cx - 7, cy - 5, cx - 5, cy + 5, color)
+				graphics.fill(cx + 5, cy - 5, cx + 7, cy + 5, color)
+			}
+		}
+	}
+
+	private fun triangleRight(graphics: GuiGraphicsExtractor, left: Int, centerY: Int, height: Int, color: Int) {
+		for (row in 0 until height) {
+			val distance = kotlin.math.abs(row - height / 2)
+			val length = (height / 2 - distance) + 1
+			graphics.fill(left, centerY - height / 2 + row, left + length, centerY - height / 2 + row + 1, color)
+		}
+	}
+
+	private fun triangleLeft(graphics: GuiGraphicsExtractor, right: Int, centerY: Int, height: Int, color: Int) {
+		for (row in 0 until height) {
+			val distance = kotlin.math.abs(row - height / 2)
+			val length = (height / 2 - distance) + 1
+			graphics.fill(right - length, centerY - height / 2 + row, right, centerY - height / 2 + row + 1, color)
+		}
+	}
+
+	// --- input ----------------------------------------------------------------
+
+	override fun mouseClicked(event: MouseButtonEvent, doubleClick: Boolean): Boolean {
+		if (closing) return true
+		val mx = event.x()
+		val my = event.y()
+
+		// Click-outside dismiss. Uses the rail's animated position so a click during the
+		// slide-in doesn't immediately close it again.
+		val railRight = RAIL_WIDTH + (-RAIL_WIDTH * (1f - slide))
+		if (mx > railRight) {
+			beginClose()
+			return true
+		}
+
+		for (button in transportButtons) {
+			if (button.enabled && button.contains(mx, my)) {
+				MediaService.send(button.command)
+				return true
+			}
+		}
+
+		val track = MediaService.nowPlaying
+		if (track != null && track.supports(Capability.SEEK) && overProgressBar(mx, my)) {
+			scrubbing = true
+			scrubFraction = fractionAt(mx)
+			return true
+		}
+
+		return super.mouseClicked(event, doubleClick)
+	}
+
+	override fun mouseDragged(event: MouseButtonEvent, dragX: Double, dragY: Double): Boolean {
+		if (scrubbing) {
+			scrubFraction = fractionAt(event.x())
+			return true
+		}
+		return super.mouseDragged(event, dragX, dragY)
+	}
+
+	override fun mouseReleased(event: MouseButtonEvent): Boolean {
+		if (scrubbing) {
+			scrubbing = false
+			val track = MediaService.nowPlaying
+			if (track != null && track.durationMs > 0) {
+				MediaService.send(MediaCommand.Seek((track.durationMs * scrubFraction).toLong()))
+			}
+			return true
+		}
+		return super.mouseReleased(event)
+	}
+
+	override fun mouseScrolled(mouseX: Double, mouseY: Double, scrollX: Double, scrollY: Double): Boolean {
+		// Scroll over the progress bar to seek (PLAN §6.5).
+		val track = MediaService.nowPlaying
+		if (track != null && track.supports(Capability.SEEK) && track.durationMs > 0 && overProgressBar(mouseX, mouseY)) {
+			val step = 5_000L
+			val target = (track.positionNowMs() + (if (scrollY > 0) step else -step))
+				.coerceIn(0L, track.durationMs)
+			MediaService.send(MediaCommand.Seek(target))
+			return true
+		}
+		return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY)
+	}
+
+	override fun keyPressed(event: KeyEvent): Boolean {
+		// ESC and the toggle key both dismiss, so the panel closes with whichever the
+		// player reaches for.
+		if (event.key() == GLFW.GLFW_KEY_ESCAPE || JukeblockKeys.isToggleKey(event.key())) {
+			beginClose()
+			return true
+		}
+		return super.keyPressed(event)
+	}
+
+	override fun shouldCloseOnEsc(): Boolean = false
+
+	// --- helpers --------------------------------------------------------------
+
+	/** Vertical band around the progress bar, matching what [renderProgress] hit-tests. */
+	private fun overProgressBar(mx: Double, my: Double): Boolean {
+		val y = progressBarTop ?: return false
+		val originX = (-RAIL_WIDTH * (1f - slide)).roundToInt()
+		val x = originX + PADDING
+		return mx >= x && mx < x + (RAIL_WIDTH - PADDING * 2) &&
+			my >= y - PROGRESS_HIT_PAD && my < y + PROGRESS_HEIGHT + PROGRESS_HIT_PAD
+	}
+
+	/** Recorded during render so input uses exactly the laid-out position. */
+	private var progressBarTop: Int? = null
+
+	private fun fractionAt(mx: Double): Float {
+		val originX = (-RAIL_WIDTH * (1f - slide)).roundToInt()
+		val x = originX + PADDING
+		val barWidth = RAIL_WIDTH - PADDING * 2
+		return ((mx - x) / barWidth).toFloat().coerceIn(0f, 1f)
+	}
+
+	private fun beginClose() {
+		if (!closing) {
+			closing = true
+			openedAtMs = System.currentTimeMillis()
+		}
+	}
+
+	/** Frame-rate independent: driven by wall clock, not tick count. */
+	private fun advanceSlide() {
+		val elapsed = (System.currentTimeMillis() - openedAtMs).toFloat()
+		val raw = (elapsed / SLIDE_MS).coerceIn(0f, 1f)
+		slide = if (closing) Accent.smoothstep(1f - raw) else Accent.smoothstep(raw)
+	}
+
+	private fun nextRepeat(current: RepeatMode?): RepeatMode = when (current) {
+		null, RepeatMode.NONE -> RepeatMode.LIST
+		RepeatMode.LIST -> RepeatMode.TRACK
+		RepeatMode.TRACK -> RepeatMode.NONE
+	}
+
+	private fun truncate(text: String, maxWidth: Int): Component {
+		if (font.width(text) <= maxWidth) return Component.literal(text)
+		val ellipsis = "..."
+		val room = maxWidth - font.width(ellipsis)
+		return Component.literal(font.plainSubstrByWidth(text, room) + ellipsis)
+	}
+
+	private fun formatTime(ms: Long): String {
+		val totalSeconds = (ms / 1000).coerceAtLeast(0)
+		val minutes = totalSeconds / 60
+		val seconds = totalSeconds % 60
+		return if (minutes >= 60) {
+			"%d:%02d:%02d".format(minutes / 60, minutes % 60, seconds)
+		} else {
+			"%d:%02d".format(minutes, seconds)
+		}
+	}
+
+	/**
+	 * SMTC ids are raw app identifiers — `Spotify.exe`, or a package family name for
+	 * Store apps. Trim them into something worth showing.
+	 */
+	private fun prettySourceName(sourceId: String): String {
+		if (sourceId.isEmpty()) return "Unknown"
+		val base = sourceId.substringBefore('!').substringBefore('_')
+		return base.removeSuffix(".exe").ifEmpty { sourceId }
+	}
+}
