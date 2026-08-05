@@ -73,10 +73,12 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		/**
 		 * How far album art may be enlarged beyond its own resolution.
 		 *
-		 * Past roughly this the smoothing stops looking like a photo and starts looking
-		 * like a blur, which is what browser thumbnails were doing at full rail width.
+		 * Measured sources: Spotify publishes 300x300, a browser publishes about 150x83.
+		 * At full rail width the browser one is a 4x blowup — visibly mush — but capping
+		 * tightly at 1.5x left it postage-stamp sized. This is the compromise; the source
+		 * genuinely cannot be both large and sharp.
 		 */
-		const val MAX_ART_UPSCALE = 1.5f
+		const val MAX_ART_UPSCALE = 2.6f
 
 		const val ICON_SIZE = 16
 
@@ -324,13 +326,14 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		graphics.text(font, message, originX + PADDING, height / 2 - font.lineHeight / 2, colorTextDim)
 	}
 
+	/** Height the last frame's artwork actually occupied, for closing up the layout. */
+	private var lastArtHeight = 0
+
 	private fun renderArtwork(graphics: GuiGraphicsExtractor, originX: Int, top: Int, accent: Int): Int {
 		val size = artSize
 		// Too short a window to show a cover at all — skip it rather than draw a sliver.
 		if (size < 24) return top
 
-		// Centred: on a short window the art is narrower than the rail.
-		val x = originX + (railWidth - size) / 2
 
 		val art = AlbumArt.texture
 		if (art != null) {
@@ -372,12 +375,18 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			// innerBlit(x0, x1, y0, y1). Passing a size here silently renders the
 			// wrong rectangle.
 			graphics.blit(art, ax, ay, ax + drawW, ay + drawH, 0f, 1f, 0f, 1f)
+			lastArtHeight = drawH
 		} else {
-			graphics.fill(x, top, x + size, top + size, colorTrack)
+			// No artwork: a square placeholder, centred like the real thing would be.
+			lastArtHeight = size
+			val px = originX + (railWidth - size) / 2
+			graphics.fill(px, top, px + size, top + size, colorTrack)
 			val label = Component.translatable("jukeblock.panel.no_art")
-			graphics.centeredText(font, label, x + size / 2, top + size / 2 - font.lineHeight / 2, colorTextFaint)
+			graphics.centeredText(font, label, px + size / 2, top + size / 2 - font.lineHeight / 2, colorTextFaint)
 		}
-		return top + size + SECTION_GAP
+		// Flow from the bottom of the image, not the bottom of its reserved box. A small
+		// browser thumbnail otherwise left a void between the art and the title.
+		return top + lastArtHeight + SECTION_GAP
 	}
 
 	private fun renderMetadata(graphics: GuiGraphicsExtractor, originX: Int, top: Int, track: TrackInfo, accentForHover: Int, mouseOverTitle: Boolean): Int {

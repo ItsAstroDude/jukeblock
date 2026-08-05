@@ -4,6 +4,8 @@ import com.terraformersmc.modmenu.api.ConfigScreenFactory
 import com.terraformersmc.modmenu.api.ModMenuApi
 import dev.astro.jukeblock.JukeblockConfig
 import me.shedaniel.clothconfig2.api.ConfigBuilder
+import me.shedaniel.clothconfig2.api.Requirement
+import net.minecraft.network.chat.ClickEvent
 import net.fabricmc.loader.api.FabricLoader
 import net.minecraft.network.chat.Component
 
@@ -24,21 +26,10 @@ class JukeblockModMenu : ModMenuApi {
 
 		return ConfigScreenFactory { parent ->
 			val config = JukeblockConfig.current
-			val wasFree = config.hudCornerEnum == HudCorner.FREE
-
 			val builder = ConfigBuilder.create()
 				.setParentScreen(parent)
 				.setTitle(Component.translatable("jukeblock.config.title"))
-				.setSavingRunnable {
-					JukeblockConfig.save()
-					// Switching to FREE and then being left on a settings list is a dead
-					// end — the whole point of FREE is placing it by hand, so hand the
-					// player the drag screen instead of making them find the keybind.
-					if (!wasFree && JukeblockConfig.current.hudCornerEnum == HudCorner.FREE) {
-						val client = net.minecraft.client.Minecraft.getInstance()
-						client.gui.setScreen(HudPositionScreen(client.gui.screen()))
-					}
-				}
+				.setSavingRunnable { JukeblockConfig.save() }
 
 			val entries = builder.entryBuilder()
 			val appearance = builder.getOrCreateCategory(Component.translatable("jukeblock.config.category.appearance"))
@@ -99,16 +90,27 @@ class JukeblockModMenu : ModMenuApi {
 					.build(),
 			)
 
+			val cornerEntry = entries.startEnumSelector(
+				Component.translatable("jukeblock.config.hudCorner"),
+				HudCorner::class.java,
+				config.hudCornerEnum,
+			)
+				.setDefaultValue(HudCorner.TOP_LEFT)
+				.setTooltip(Component.translatable("jukeblock.config.hudCorner.tooltip"))
+				.setSaveConsumer { config.hudCorner = it.name }
+				.build()
+			hud.addEntry(cornerEntry)
+
+			// Runs the client command, which opens the drag-to-place screen. Cloth has no
+			// button entry, but its text entries do dispatch click events.
 			hud.addEntry(
-				entries.startEnumSelector(
-					Component.translatable("jukeblock.config.hudCorner"),
-					HudCorner::class.java,
-					config.hudCornerEnum,
-				)
-					.setDefaultValue(HudCorner.TOP_LEFT)
-					.setTooltip(Component.translatable("jukeblock.config.hudCorner.tooltip"))
-					.setSaveConsumer { config.hudCorner = it.name }
-					.build(),
+				entries.startTextDescription(
+					Component.translatable("jukeblock.config.hudPlace").withStyle { style ->
+						style.withClickEvent(ClickEvent.RunCommand("/jukeblock hud"))
+							.withUnderlined(true)
+							.withColor(0x53E076)
+					},
+				).build(),
 			)
 
 			hud.addEntry(
@@ -119,10 +121,15 @@ class JukeblockModMenu : ModMenuApi {
 					.build(),
 			)
 
+			// Only meaningful for the four fixed corners — with FREE the HUD is already
+			// exactly where it was dragged, so nudging it is noise.
+			val notFree = Requirement.not(Requirement.isValue(cornerEntry, HudCorner.FREE))
+
 			hud.addEntry(
 				entries.startIntSlider(Component.translatable("jukeblock.config.hudOffsetX"), config.hudOffsetX, -200, 200)
 					.setDefaultValue(0)
 					.setTooltip(Component.translatable("jukeblock.config.hudOffset.tooltip"))
+					.setDisplayRequirement(notFree)
 					.setSaveConsumer { config.hudOffsetX = it }
 					.build(),
 			)
@@ -131,12 +138,8 @@ class JukeblockModMenu : ModMenuApi {
 				entries.startIntSlider(Component.translatable("jukeblock.config.hudOffsetY"), config.hudOffsetY, -200, 200)
 					.setDefaultValue(0)
 					.setTooltip(Component.translatable("jukeblock.config.hudOffset.tooltip"))
+					.setDisplayRequirement(notFree)
 					.setSaveConsumer { config.hudOffsetY = it }
-					.build(),
-			)
-
-			hud.addEntry(
-				entries.startTextDescription(Component.translatable("jukeblock.config.hudPlaceHint"))
 					.build(),
 			)
 
