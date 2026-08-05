@@ -1,0 +1,69 @@
+plugins {
+	id 'net.fabricmc.fabric-loom' version "${loom_version}"
+	id 'org.jetbrains.kotlin.jvm' version "${kotlin_version}"
+}
+
+version = project.mod_version
+group = project.maven_group
+
+repositories {
+	mavenCentral()
+}
+
+loom {
+	// Client-side only mod: no split source sets, everything lives in `main`.
+	mods {
+		"jukeblock" {
+			sourceSet sourceSets.main
+		}
+	}
+}
+
+dependencies {
+	// To change the versions see the gradle.properties file
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+
+	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+	implementation "net.fabricmc:fabric-language-kotlin:${project.fabric_kotlin_version}"
+
+	// Bridge to the native SMTC cdylib. Not a Fabric mod, so Loom wraps it
+	// into a nested jar automatically.
+	implementation "net.java.dev.jna:jna:${project.jna_version}"
+	include "net.java.dev.jna:jna:${project.jna_version}"
+}
+
+processResources {
+	def version = project.version
+	inputs.property "version", version
+
+	filesMatching("fabric.mod.json") {
+		expand "version": version
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 25
+}
+
+kotlin {
+	compilerOptions {
+		jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_25
+	}
+}
+
+java {
+	withSourcesJar()
+
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
+}
+
+jar {
+	def projectName = project.name
+	inputs.property "projectName", projectName
+
+	from("LICENSE") {
+		rename { "${it}_$projectName" }
+	}
+}

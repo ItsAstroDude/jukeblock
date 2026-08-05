@@ -1,0 +1,8 @@
+# Statically link the MSVC CRT.
+#
+# Without this the DLL imports VCRUNTIME140.dll and the api-ms-win-crt-* set, i.e. the
+# Visual C++ redistributable — which is common but NOT guaranteed on a clean Windows
+# install. Jukeblock's whole pitch is "works the second you install it", and a missing
+# redist would surface as an UnsatisfiedLinkError with no obvious cause. Costs ~40 KB.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
