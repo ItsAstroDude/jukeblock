@@ -24,10 +24,21 @@ class JukeblockModMenu : ModMenuApi {
 
 		return ConfigScreenFactory { parent ->
 			val config = JukeblockConfig.current
+			val wasFree = config.hudCornerEnum == HudCorner.FREE
+
 			val builder = ConfigBuilder.create()
 				.setParentScreen(parent)
 				.setTitle(Component.translatable("jukeblock.config.title"))
-				.setSavingRunnable { JukeblockConfig.save() }
+				.setSavingRunnable {
+					JukeblockConfig.save()
+					// Switching to FREE and then being left on a settings list is a dead
+					// end — the whole point of FREE is placing it by hand, so hand the
+					// player the drag screen instead of making them find the keybind.
+					if (!wasFree && JukeblockConfig.current.hudCornerEnum == HudCorner.FREE) {
+						val client = net.minecraft.client.Minecraft.getInstance()
+						client.gui.setScreen(HudPositionScreen(client.gui.screen()))
+					}
+				}
 
 			val entries = builder.entryBuilder()
 			val appearance = builder.getOrCreateCategory(Component.translatable("jukeblock.config.category.appearance"))
@@ -121,6 +132,11 @@ class JukeblockModMenu : ModMenuApi {
 					.setDefaultValue(0)
 					.setTooltip(Component.translatable("jukeblock.config.hudOffset.tooltip"))
 					.setSaveConsumer { config.hudOffsetY = it }
+					.build(),
+			)
+
+			hud.addEntry(
+				entries.startTextDescription(Component.translatable("jukeblock.config.hudPlaceHint"))
 					.build(),
 			)
 
