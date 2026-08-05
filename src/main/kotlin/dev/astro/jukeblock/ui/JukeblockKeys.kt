@@ -25,6 +25,10 @@ object JukeblockKeys {
 	lateinit var previous: KeyMapping
 		private set
 
+	/** Opens the drag-to-place screen for the now-playing HUD. */
+	lateinit var moveHud: KeyMapping
+		private set
+
 	fun register() {
 		toggle = bind("toggle", GLFW.GLFW_KEY_Z)
 		// Unbound by default: these are handy but not worth silently claiming three more
@@ -32,6 +36,7 @@ object JukeblockKeys {
 		playPause = bind("play_pause", InputConstants.UNKNOWN.value)
 		next = bind("next", InputConstants.UNKNOWN.value)
 		previous = bind("previous", InputConstants.UNKNOWN.value)
+		moveHud = bind("move_hud", InputConstants.UNKNOWN.value)
 	}
 
 	private fun bind(name: String, key: Int): KeyMapping = KeyMappingHelper.registerKeyMapping(

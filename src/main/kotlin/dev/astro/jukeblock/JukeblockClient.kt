@@ -3,6 +3,7 @@ package dev.astro.jukeblock
 import com.mojang.brigadier.CommandDispatcher
 import dev.astro.jukeblock.media.MediaCommand
 import dev.astro.jukeblock.media.MediaService
+import dev.astro.jukeblock.ui.HudPositionScreen
 import dev.astro.jukeblock.ui.JukeblockKeys
 import dev.astro.jukeblock.ui.NowPlayingHud
 import dev.astro.jukeblock.ui.PlayerScreen
@@ -32,6 +33,12 @@ class JukeblockClient : ClientModInitializer {
 				// fight it for input, and the panel is meant to be a glance, not a mode.
 				if (client.gui.screen() == null) {
 					client.gui.setScreen(PlayerScreen())
+				}
+			}
+
+			while (JukeblockKeys.moveHud.consumeClick()) {
+				if (client.gui.screen() == null) {
+					client.gui.setScreen(HudPositionScreen(null))
 				}
 			}
 

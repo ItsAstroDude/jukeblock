@@ -64,15 +64,16 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 
 		// Gradient endpoints. Both are fully opaque and the blend is only 6%, so the
 		// panel's own alpha shifts by well under one step of 255.
-		/** Behind every glyph, so icons keep contrast on a translucent panel. */
-		const val GLYPH_SHADOW = 0x90000000.toInt()
-
 		const val WHITE = 0xFFFFFFFF.toInt()
 		const val BLACK = 0xFF000000.toInt()
 
 		val ICONS: Identifier = Identifier.fromNamespaceAndPath("jukeblock", "textures/gui/icons.png")
+		/** Size the glyph is drawn at, in GUI units. */
 		const val ICON_SIZE = 16
-		const val ICON_SHEET_WIDTH = 112
+
+		/** Source resolution per glyph. 64px is 1:1 at GUI scale 4. */
+		const val ICON_SRC = 64
+		const val ICON_SHEET_WIDTH = ICON_SRC * 7
 
 		/** The three buttons actually hit mid-game get room; toggles are smaller. */
 		const val MAIN_TRANSPORT_SIZE = 38
@@ -326,17 +327,16 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			// Fit rather than fill. Album covers are square, but browser thumbnails are
 			// 16:9 and stretching one into a square box is exactly the "looks funny"
 			// artefact — letterboxing keeps the whole frame at its own proportions.
+			// The art area is a box, not a square: `size` is the vertical allowance and
+			// the full content width is available across. A 16:9 video thumbnail then
+			// grows to fill the width instead of being shrunk to fit a square, which is
+			// what left browser art looking small and stranded.
 			val srcW = AlbumArt.artWidth.coerceAtLeast(1)
 			val srcH = AlbumArt.artHeight.coerceAtLeast(1)
-			val drawW: Int
-			val drawH: Int
-			if (srcW >= srcH) {
-				drawW = size
-				drawH = (size.toLong() * srcH / srcW).toInt().coerceAtLeast(1)
-			} else {
-				drawH = size
-				drawW = (size.toLong() * srcW / srcH).toInt().coerceAtLeast(1)
-			}
+			val boxW = railWidth - PADDING * 2
+			val scale = minOf(boxW.toFloat() / srcW, size.toFloat() / srcH)
+			val drawW = (srcW * scale).toInt().coerceAtLeast(1)
+			val drawH = (srcH * scale).toInt().coerceAtLeast(1)
 			val ax = originX + (railWidth - drawW) / 2
 			val ay = top + (size - drawH) / 2
 
@@ -361,10 +361,23 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 
 		titleTop = y
 		val titleHovered = mouseOverTitle
-		graphics.text(font, truncate(track.title, maxWidth), x, y, if (titleHovered) accentForHover else colorText)
+		val titleColor = if (titleHovered) accentForHover else colorText
+
+		// Long titles scroll rather than truncate. An ellipsis hides exactly the part
+		// that distinguishes one remix from another, and the rail is narrow enough that
+		// plenty of titles overflow it.
+		val titleWidth = font.width(track.title)
+		if (titleWidth > maxWidth) {
+			graphics.enableScissor(x, y, x + maxWidth, y + font.lineHeight)
+			val offset = Marquee.offset("panel:" + track.trackKey, titleWidth, maxWidth)
+			graphics.text(font, track.title, x - offset, y, titleColor)
+			graphics.disableScissor()
+		} else {
+			graphics.text(font, track.title, x, y, titleColor)
+		}
 		if (titleHovered) {
 			// Underline, so it's discoverable as a link rather than a secret.
-			graphics.fill(x, y + font.lineHeight, x + minOf(maxWidth, font.width(track.title)), y + font.lineHeight + 1, accentForHover)
+			graphics.fill(x, y + font.lineHeight, x + minOf(maxWidth, titleWidth), y + font.lineHeight + 1, accentForHover)
 		}
 		y += font.lineHeight + 4
 
@@ -610,25 +623,27 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		val left = x + (size - iconSize) / 2
 		val top = y + (size - iconSize) / 2
 
-		fun blit(dx: Int, dy: Int, tint: Int) = graphics.blit(
+		// The dark halo is baked into the texture rather than blitted as an offset copy:
+		// multiplying by the tint leaves white as the tint colour and black as black, so
+		// the halo survives colouring and scales with the glyph. The offset version left
+		// a visible ghost that made the icons look smeared.
+		graphics.blit(
 			RenderPipelines.GUI_TEXTURED,
 			ICONS,
-			left + dx,
-			top + dy,
-			(glyph.index * ICON_SIZE).toFloat(),
+			left,
+			top,
+			(glyph.index * ICON_SRC).toFloat(),
 			0f,
 			iconSize,
 			iconSize,
+			// Source region is 64px per glyph while the draw size is ~16 units, so the
+			// region has to be given separately from the destination size.
+			ICON_SRC,
+			ICON_SRC,
 			ICON_SHEET_WIDTH,
-			ICON_SIZE,
-			tint,
+			ICON_SRC,
+			color,
 		)
-
-		// Drop shadow first. The panel is translucent and the user can make it more so;
-		// at 50% opacity a flat grey glyph over bright terrain nearly disappears. The
-		// shadow gives every icon its own contrast regardless of what's behind it.
-		blit(1, 1, GLYPH_SHADOW)
-		blit(0, 0, color)
 	}
 
 	// --- input ----------------------------------------------------------------

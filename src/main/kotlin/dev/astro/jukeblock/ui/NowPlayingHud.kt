@@ -14,8 +14,13 @@ import net.minecraft.resources.Identifier
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-/** Where the HUD sits. Top-left is the default — see [NowPlayingHud]. */
-enum class HudCorner { TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT }
+/**
+ * Where the HUD sits.
+ *
+ * [FREE] is placed by dragging it in [HudPositionScreen] rather than by nudging
+ * sliders — you can't aim a HUD you can't see while you're aiming it.
+ */
+enum class HudCorner { TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT, FREE }
 
 enum class HudMode {
 	/** Never shown. */
@@ -55,10 +60,47 @@ object NowPlayingHud : HudElement {
 	private var lastTrackKey: String? = null
 	private var toastUntilMs = 0L
 
-	/** Marquee offset for titles too long to fit, in units. */
-	private var scroll = 0f
-	private var scrollKey: String? = null
-	private var lastFrameMs = 0L
+	/** Laid-out rectangle, so the positioning screen can outline and drag it. */
+	data class Bounds(val x: Int, val y: Int, val w: Int, val h: Int) {
+		fun contains(mx: Int, my: Int) = mx >= x && mx < x + w && my >= y && my < y + h
+	}
+
+	fun bounds(screenW: Int, screenH: Int): Bounds {
+		val config = JukeblockConfig.current
+		val h = ART + PAD * 2
+
+		if (config.hudCornerEnum == HudCorner.FREE) {
+			// Stored as a fraction of the free space, so the HUD stays where it was put
+			// when the window resizes or the GUI scale changes.
+			val x = (config.hudFreeX * (screenW - WIDTH).coerceAtLeast(0)).toInt()
+			val y = (config.hudFreeY * (screenH - h).coerceAtLeast(0)).toInt()
+			return Bounds(x, y, WIDTH, h)
+		}
+
+		val x = when (config.hudCornerEnum) {
+			HudCorner.TOP_RIGHT, HudCorner.BOTTOM_RIGHT -> screenW - WIDTH - PAD
+			else -> PAD
+		} + config.hudOffsetX
+		val y = when (config.hudCornerEnum) {
+			HudCorner.BOTTOM_LEFT, HudCorner.BOTTOM_RIGHT -> screenH - h - PAD
+			else -> PAD
+		} + config.hudOffsetY
+		return Bounds(x, y, WIDTH, h)
+	}
+
+	/** Draws the HUD regardless of mode, for the positioning screen. */
+	fun renderPreview(graphics: GuiGraphicsExtractor) {
+		val track = MediaService.nowPlaying ?: previewTrack()
+		draw(graphics, track, 1f, JukeblockConfig.current)
+	}
+
+	/** Stand-in so the box is still draggable when nothing is playing. */
+	private fun previewTrack() = TrackInfo(
+		sourceId = "preview", title = "Now playing", artist = "Jukeblock", album = "",
+		albumArtist = "", trackNumber = 0, status = dev.astro.jukeblock.media.PlaybackStatus.PLAYING,
+		positionMs = 45_000, durationMs = 180_000, lastUpdatedUnixMs = 0,
+		shuffle = null, repeat = null, hasThumbnail = false, capabilities = emptySet(),
+	)
 
 	fun register() {
 		HudElementRegistry.addLast(Identifier.fromNamespaceAndPath(Jukeblock.MOD_ID, "now_playing"), this)
@@ -78,7 +120,6 @@ object NowPlayingHud : HudElement {
 					(JukeblockConfig.current.hudToastSeconds * 1000L)
 			}
 			lastTrackKey = key
-			scroll = 0f
 		}
 	}
 
@@ -123,18 +164,9 @@ object NowPlayingHud : HudElement {
 		val font = client.font
 		val height = ART + PAD * 2
 
-		val screenW = graphics.guiWidth()
-		val screenH = graphics.guiHeight()
-
-		val corner = config.hudCornerEnum
-		val x = when (corner) {
-			HudCorner.TOP_LEFT, HudCorner.BOTTOM_LEFT -> PAD + config.hudOffsetX
-			HudCorner.TOP_RIGHT, HudCorner.BOTTOM_RIGHT -> screenW - WIDTH - PAD + config.hudOffsetX
-		}
-		val y = when (corner) {
-			HudCorner.TOP_LEFT, HudCorner.TOP_RIGHT -> PAD + config.hudOffsetY
-			HudCorner.BOTTOM_LEFT, HudCorner.BOTTOM_RIGHT -> screenH - height - PAD + config.hudOffsetY
-		}
+		val box = bounds(graphics.guiWidth(), graphics.guiHeight())
+		val x = box.x
+		val y = box.y
 
 		val accent = if (config.accentFromArt) AlbumArt.accent else (0xFF shl 24) or config.accentRgb
 		val panel = config.panelArgb
@@ -180,7 +212,7 @@ object NowPlayingHud : HudElement {
 		// at once in the corner of the screen is noise, not information.
 		graphics.enableScissor(textX, y + PAD, textX + textW, y + PAD + font.lineHeight)
 		val titleW = font.width(track.title)
-		val offset = if (titleW > textW) marquee(track.trackKey, titleW, textW) else 0
+		val offset = Marquee.offset("hud:" + track.trackKey, titleW, textW)
 		graphics.text(font, track.title, textX - offset, y + PAD, title)
 		graphics.disableScissor()
 
@@ -200,31 +232,4 @@ object NowPlayingHud : HudElement {
 		}
 	}
 
-	/**
-	 * Scrolls a long title back and forth, pausing at each end.
-	 *
-	 * Frame-rate independent: driven by wall-clock delta rather than a per-frame step,
-	 * so it moves at the same speed at 30 fps and 300.
-	 */
-	private fun marquee(key: String, textWidth: Int, viewWidth: Int): Int {
-		val now = System.currentTimeMillis()
-		val deltaMs = if (lastFrameMs == 0L) 0L else (now - lastFrameMs).coerceAtMost(100L)
-		lastFrameMs = now
-
-		if (key != scrollKey) {
-			scrollKey = key
-			scroll = 0f
-		}
-
-		val travel = (textWidth - viewWidth).toFloat()
-		// Units per second, plus a pause at each end expressed as extra travel.
-		val speed = 14f
-		val pause = 26f
-		val cycle = travel + pause * 2
-		scroll = (scroll + speed * deltaMs / 1000f) % (cycle * 2)
-
-		val forward = scroll <= cycle
-		val phase = if (forward) scroll else cycle * 2 - scroll
-		return (phase - pause).coerceIn(0f, travel).toInt()
-	}
 }

@@ -60,6 +60,15 @@ data class JukeblockConfig(
 
 	/** Hide the HUD while playback is paused. */
 	var hudHideWhenPaused: Boolean = false,
+
+	/**
+	 * Free placement, as a fraction of the available space (0..1).
+	 *
+	 * Fractions rather than units so the HUD keeps its spot across window resizes and
+	 * GUI-scale changes. Only used when [hudCorner] is `FREE`; set by dragging.
+	 */
+	var hudFreeX: Float = 0.02f,
+	var hudFreeY: Float = 0.02f,
 ) {
 	val hudModeEnum: dev.astro.jukeblock.ui.HudMode
 		get() = runCatching { dev.astro.jukeblock.ui.HudMode.valueOf(hudMode) }
@@ -84,6 +93,8 @@ data class JukeblockConfig(
 		hudToastSeconds = hudToastSeconds.coerceIn(1, 30),
 		hudOffsetX = hudOffsetX.coerceIn(-400, 400),
 		hudOffsetY = hudOffsetY.coerceIn(-400, 400),
+		hudFreeX = hudFreeX.coerceIn(0f, 1f),
+		hudFreeY = hudFreeY.coerceIn(0f, 1f),
 	)
 
 	companion object {
