@@ -4,6 +4,7 @@ import com.mojang.blaze3d.platform.NativeImage
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 
 /**
  * Pulls an accent colour out of album art, clamped into a band that stays legible on
@@ -188,12 +189,64 @@ object Accent {
 	}
 
 	/** True when [color] is light enough that dark text should sit on it. */
-	fun isLight(color: Int): Boolean {
-		val r = (color ushr 16) and 0xFF
-		val g = (color ushr 8) and 0xFF
-		val b = color and 0xFF
-		// Rec. 601 luma — good enough for a contrast decision, and cheap.
-		return (0.299f * r + 0.587f * g + 0.114f * b) > 150f
+	fun isLight(color: Int): Boolean = relativeLuminance(color) > 0.42f
+
+	/** WCAG relative luminance, 0 (black) to 1 (white). */
+	fun relativeLuminance(color: Int): Float {
+		fun channel(v: Int): Float {
+			val c = v / 255f
+			return if (c <= 0.03928f) c / 12.92f else ((c + 0.055f) / 1.055f).pow(2.4f)
+		}
+		val r = channel((color ushr 16) and 0xFF)
+		val g = channel((color ushr 8) and 0xFF)
+		val b = channel(color and 0xFF)
+		return 0.2126f * r + 0.7152f * g + 0.0722f * b
+	}
+
+	/** WCAG contrast ratio between two colours, 1:1 (identical) to 21:1 (black on white). */
+	fun contrastRatio(a: Int, b: Int): Float {
+		val la = relativeLuminance(a)
+		val lb = relativeLuminance(b)
+		val lighter = max(la, lb)
+		val darker = min(la, lb)
+		return (lighter + 0.05f) / (darker + 0.05f)
+	}
+
+	/**
+	 * Nudges [accent] until it stands out against [background].
+	 *
+	 * Once the panel colour is the user's to choose, an accent taken from album art can
+	 * land right on top of it — a red cover playing against a red panel leaves the
+	 * progress fill nearly invisible. The hue is kept, because that's what ties the
+	 * accent to the artwork; lightness and saturation are what get moved.
+	 *
+	 * Direction is chosen from the background: go lighter on a dark panel, darker on a
+	 * light one, so this works for a white panel as well as the default charcoal.
+	 */
+	fun adaptTo(accent: Int, background: Int, minContrast: Float = 3.0f): Int {
+		if (contrastRatio(accent, background) >= minContrast) return accent
+
+		val (h, s, l) = rgbToHsl(
+			(accent ushr 16) and 0xFF,
+			(accent ushr 8) and 0xFF,
+			accent and 0xFF,
+		)
+		// A washed-out accent has nowhere to go on the lightness axis, so give it some
+		// saturation to work with first.
+		val saturation = s.coerceAtLeast(0.45f)
+		val goLighter = relativeLuminance(background) < 0.4f
+
+		var lightness = l
+		var best = hslToArgb(h, saturation, lightness)
+		// Step rather than solve: luminance isn't linear in HSL lightness, and 24 steps
+		// covers the whole axis finely enough that nobody could see the difference.
+		repeat(24) {
+			if (contrastRatio(best, background) >= minContrast) return best
+			lightness = if (goLighter) (lightness + 0.035f) else (lightness - 0.035f)
+			if (lightness !in 0f..1f) return best
+			best = hslToArgb(h, saturation, lightness)
+		}
+		return best
 	}
 
 	/** Smoothstep, for the panel slide. Linear easing looks mechanical at this speed. */

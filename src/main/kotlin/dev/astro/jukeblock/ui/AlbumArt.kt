@@ -1,7 +1,10 @@
 package dev.astro.jukeblock.ui
 
 import com.mojang.blaze3d.platform.NativeImage
+import com.mojang.blaze3d.systems.RenderSystem
+import com.mojang.blaze3d.textures.FilterMode
 import dev.astro.jukeblock.Jukeblock
+import dev.astro.jukeblock.JukeblockConfig
 import dev.astro.jukeblock.media.MediaService
 import dev.astro.jukeblock.media.TrackInfo
 import net.minecraft.client.Minecraft
@@ -116,7 +119,11 @@ object AlbumArt {
 				"album_art/${counter.getAndIncrement()}",
 			)
 			// DynamicTexture takes ownership of the image and closes it with the texture.
-			val tex = DynamicTexture({ "Jukeblock album art" }, image)
+			val tex = if (JukeblockConfig.current.smoothAlbumArt) {
+				SmoothTexture(image)
+			} else {
+				DynamicTexture({ "Jukeblock album art" }, image)
+			}
 			Minecraft.getInstance().textureManager.register(id, tex)
 
 			releaseCurrent()
@@ -153,5 +160,24 @@ object AlbumArt {
 		loadedKey = null
 		requestedKey = null
 		accent = Accent.FALLBACK
+	}
+
+	/**
+	 * Album art with linear filtering instead of Minecraft's default nearest-neighbour.
+	 *
+	 * SMTC hands out a 300x300 thumbnail whatever the player's real cover resolution is,
+	 * and the panel draws it larger than that — ~1.4x at GUI scale 4. Nearest-neighbour
+	 * upscaling by a non-integer factor duplicates some pixel rows and not others, which
+	 * is the blockiness you see on a photo. Nearest is right for Minecraft's own pixel-art
+	 * textures and wrong for a photograph.
+	 *
+	 * `DynamicTexture` hardcodes NEAREST in its constructor, so the sampler is swapped
+	 * afterwards. Clamp-to-edge rather than repeat, so filtering at the border can't pull
+	 * in pixels from the opposite side.
+	 */
+	private class SmoothTexture(image: NativeImage) : DynamicTexture({ "Jukeblock album art" }, image) {
+		init {
+			sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR)
+		}
 	}
 }
