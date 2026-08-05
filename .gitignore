@@ -46,3 +46,6 @@ native/**/target/
 # phase 0 spike scratch
 
 tools/jna-spike/out/
+
+# vanilla textures extracted at icon-generation time (not redistributed in-repo)
+tools/icons/vanilla/
