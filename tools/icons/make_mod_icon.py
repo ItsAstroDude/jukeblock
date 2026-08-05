@@ -1,40 +1,69 @@
 """
-Generates the mod icon: Minecraft's jukebox block with notes rising off it.
+Generates the mod icon: the actual vanilla jukebox block, rendered isometrically,
+with notes rising off it.
 
-On-brand for the name, and it reads as "this is a Minecraft mod about music" in the
-mod list without anyone having to squint. Authored at 32x32 and upscaled with
-nearest-neighbour so every edge lands on a pixel boundary, the way Minecraft's own
-art does.
+The textures are read straight out of the Minecraft client jar rather than redrawn,
+so the block is the real thing rather than an approximation of it. The projection is
+the same 2:1 isometric Minecraft uses for block item icons, sampled nearest-neighbour
+so the texture's pixels stay square-edged instead of blurring.
 
-    python tools/icons/make_mod_icon.py
+    python tools/icons/make_mod_icon.py [path/to/minecraft-client.jar]
 
-Writes src/main/resources/assets/jukeblock/icon.png (256x256) plus a magnified
-preview next to this script. PLAN.md phase 4 requires the icon under 100 KB —
-CosmicNotify's was 5.1 MB.
+Writes src/main/resources/assets/jukeblock/icon.png (256x256) plus a preview next to
+this script. PLAN.md phase 4 requires the icon under 100 KB.
+
+Note the generated icon contains Mojang texture data. That's normal for a Minecraft
+mod icon and consistent with how the wider ecosystem works, but it is worth being a
+deliberate choice rather than an accident — the previous hand-drawn version is in git
+history if a fully original icon is ever preferred.
 """
 
+import glob
 import os
-import zlib
 import struct
+import sys
+import zipfile
+import zlib
 
-SRC = 32
-SCALE = 8
+OUT_SIZE = 256
 
-T = None                              # transparent
-BG = (0x21, 0x21, 0x29, 0xFF)         # charcoal, matches the panel
+SIDE = "assets/minecraft/textures/block/jukebox_side.png"
+TOP = "assets/minecraft/textures/block/jukebox_top.png"
+
+BG = (0x21, 0x21, 0x29, 0xFF)
 BG_EDGE = (0x18, 0x18, 0x1F, 0xFF)
-
-WOOD = (0x9A, 0x6E, 0x45, 0xFF)       # jukebox side planks
-WOOD_DARK = (0x7A, 0x55, 0x34, 0xFF)
-WOOD_LINE = (0x5E, 0x40, 0x27, 0xFF)  # plank seams
-TOP = (0x4B, 0x35, 0x22, 0xFF)        # dark upper band
-TOP_LIT = (0x5E, 0x44, 0x2C, 0xFF)
-SLOT = (0x1B, 0x12, 0x0D, 0xFF)       # the disc recess
-DISC = (0xC4, 0x3A, 0x3A, 0xFF)       # a record sitting in it
-OUTLINE = (0x14, 0x0E, 0x0A, 0xFF)
-
-NOTE = (0x53, 0xE0, 0x76, 0xFF)       # Liquid Lens green
+NOTE = (0x53, 0xE0, 0x76, 0xFF)
 NOTE_DIM = (0x3E, 0xA8, 0x59, 0xFF)
+
+# Minecraft shades block faces by orientation; matching it is what makes the render
+# read as a block rather than as three flat stickers.
+SHADE_TOP = 1.00
+SHADE_LEFT = 0.80
+SHADE_RIGHT = 0.62
+
+
+def find_client_jar():
+    if len(sys.argv) > 1:
+        return sys.argv[1]
+    home = os.path.expanduser("~")
+    for pattern in (
+        os.path.join(home, ".gradle/caches/fabric-loom/*/minecraft-client.jar"),
+        os.path.join(home, ".gradle/caches/fabric-loom/*/minecraft-merged.jar"),
+    ):
+        hits = sorted(glob.glob(pattern))
+        if hits:
+            return hits[-1]
+    raise SystemExit("Could not find minecraft-client.jar — pass the path as an argument.")
+
+
+def load_texture(jar, name):
+    """Returns (width, height, [(r,g,b,a), ...]) via PIL, which handles palettes."""
+    from PIL import Image
+    import io
+
+    with zipfile.ZipFile(jar) as z:
+        img = Image.open(io.BytesIO(z.read(name))).convert("RGBA")
+    return img.width, img.height, img.tobytes()
 
 
 def write_png(path, width, height, rgba):
@@ -54,85 +83,113 @@ def write_png(path, width, height, rgba):
         f.write(png)
 
 
+class Face:
+    """A texture mapped onto a parallelogram in output space.
+
+    `origin` is where source pixel (0,0) lands; `u` and `v` are the full-width and
+    full-height edge vectors. Rendering inverse-maps each output pixel back through
+    this, so no interpolation ever happens.
+    """
+
+    def __init__(self, tex, origin, u, v, shade):
+        self.w, self.h, self.px = tex
+        self.o = origin
+        self.u = u
+        self.v = v
+        self.shade = shade
+        det = u[0] * v[1] - v[0] * u[1]
+        self.inv = (v[1] / det, -v[0] / det, -u[1] / det, u[0] / det)
+
+    def sample(self, x, y):
+        dx, dy = x - self.o[0], y - self.o[1]
+        a = self.inv[0] * dx + self.inv[1] * dy
+        b = self.inv[2] * dx + self.inv[3] * dy
+        if not (0.0 <= a < 1.0 and 0.0 <= b < 1.0):
+            return None
+        sx = min(self.w - 1, int(a * self.w))
+        sy = min(self.h - 1, int(b * self.h))
+        i = (sy * self.w + sx) * 4
+        r, g, bl, al = self.px[i], self.px[i + 1], self.px[i + 2], self.px[i + 3]
+        if al == 0:
+            return None
+        s = self.shade
+        return (int(r * s), int(g * s), int(bl * s), 255)
+
+
 def main():
-    px = [[BG for _ in range(SRC)] for _ in range(SRC)]
-    c = (SRC - 1) / 2.0
+    jar = find_client_jar()
+    print(f"reading vanilla textures from {jar}")
+    side = load_texture(jar, SIDE)
+    top = load_texture(jar, TOP)
 
-    # Rounded corners so it doesn't read as a hard square in the mod list.
-    for y in range(SRC):
-        for x in range(SRC):
+    # 2:1 isometric cube. Sits left of centre so the notes have room upper-right.
+    cx, y0 = 114, 48
+    w, h, d = 78, 39, 82
+
+    A = (cx, y0)                    # top apex
+    B = (cx + w, y0 + h)            # right corner
+    C = (cx, y0 + 2 * h)            # front corner
+    D = (cx - w, y0 + h)            # left corner
+
+    faces = [
+        # Left and right walls hang straight down from the top face's edges.
+        Face(side, D, (C[0] - D[0], C[1] - D[1]), (0, d), SHADE_LEFT),
+        Face(side, C, (B[0] - C[0], B[1] - C[1]), (0, d), SHADE_RIGHT),
+        Face(top, A, (B[0] - A[0], B[1] - A[1]), (D[0] - A[0], D[1] - A[1]), SHADE_TOP),
+    ]
+
+    S = OUT_SIZE
+    c = (S - 1) / 2.0
+    px = []
+    for y in range(S):
+        row = []
+        for x in range(S):
             dx, dy = x - c, y - c
-            if max(abs(dx), abs(dy)) > 14.6 and (dx * dx + dy * dy) ** 0.5 > 18.5:
-                px[y][x] = BG_EDGE
+            if max(abs(dx), abs(dy)) > S * 0.457 and (dx * dx + dy * dy) ** 0.5 > S * 0.578:
+                row.append(BG_EDGE)
+            else:
+                row.append(BG)
+        px.append(row)
 
-    def rect(x0, y0, x1, y1, color):
-        for y in range(y0, y1 + 1):
-            for x in range(x0, x1 + 1):
-                if 0 <= x < SRC and 0 <= y < SRC:
-                    px[y][x] = color
+    # Painter's order: walls first, top face last so it wins along the shared edges.
+    for face in faces:
+        for y in range(S):
+            for x in range(S):
+                got = face.sample(x + 0.5, y + 0.5)
+                if got:
+                    px[y][x] = got
 
-    # --- the jukebox block ------------------------------------------------
-    # Sits low and left; the notes occupy the upper right.
-    bx0, by0, bx1, by1 = 3, 12, 21, 28
+    def rect(x0, y0_, x1, y1, color):
+        for yy in range(y0_, y1 + 1):
+            for xx in range(x0, x1 + 1):
+                if 0 <= xx < S and 0 <= yy < S:
+                    px[yy][xx] = color
 
-    rect(bx0, by0, bx1, by1, WOOD)
-    rect(bx0, by0, bx1, by0, OUTLINE)
-    rect(bx0, by1, bx1, by1, OUTLINE)
-    rect(bx0, by0, bx0, by1, OUTLINE)
-    rect(bx1, by0, bx1, by1, OUTLINE)
+    def eighth_note(ox, oy, u, color):
+        """Head bottom-left, stem up the right, flag off the top. `u` scales it."""
+        rect(ox + 4 * u, oy, ox + 5 * u - 1, oy + 8 * u - 1, color)          # stem
+        rect(ox + 5 * u, oy, ox + 7 * u - 1, oy + 2 * u - 1, color)          # flag
+        rect(ox, oy + 6 * u, ox + 4 * u - 1, oy + 9 * u - 1, color)          # head
+        rect(ox - u, oy + 7 * u, ox - 1, oy + 9 * u - 1, color)
 
-    # Dark upper band with the disc recess — the part that makes it a jukebox
-    # rather than a crate.
-    rect(bx0 + 1, by0 + 1, bx1 - 1, by0 + 7, TOP)
-    rect(bx0 + 1, by0 + 1, bx1 - 1, by0 + 1, TOP_LIT)
-    rect(bx0 + 3, by0 + 3, bx1 - 3, by0 + 6, SLOT)
+    eighth_note(186, 26, 8, NOTE)
+    eighth_note(126, 8, 6, NOTE_DIM)
 
-    # The record loaded in the slot. Deliberately a solid bar: a spindle hole needs
-    # a pixel of clearance all round to read as a hole, and at two pixels tall it
-    # just splits the disc into two blobs that look like eyes.
-    rect(bx0 + 5, by0 + 4, bx1 - 5, by0 + 5, DISC)
-
-    # Speckles along the band, echoing the vanilla jukebox texture.
-    for x in range(bx0 + 2, bx1 - 1, 4):
-        px[by0 + 2][x] = TOP_LIT
-
-    # Plank seams below the band.
-    for y in range(by0 + 9, by1):
-        for x in range(bx0 + 1, bx1):
-            if (y - by0) % 4 == 0:
-                px[y][x] = WOOD_LINE
-            elif (x * 7 + y * 3) % 11 == 0:
-                px[y][x] = WOOD_DARK
-
-    # --- notes ------------------------------------------------------------
-    def eighth_note(ox, oy, head, stem):
-        """Head bottom-left, stem up the right, flag off the top."""
-        rect(ox + 4, oy, ox + 4, oy + 7, stem)      # stem
-        rect(ox + 5, oy, ox + 6, oy + 1, stem)      # flag
-        rect(ox + 1, oy + 6, ox + 3, oy + 8, head)  # head
-        rect(ox, oy + 7, ox, oy + 8, head)
-
-    eighth_note(22, 3, NOTE, NOTE)
-    eighth_note(15, 1, NOTE_DIM, NOTE_DIM)
-
-    # Upscale.
-    w = h = SRC * SCALE
     buf = bytearray()
-    for y in range(h):
-        row = px[y // SCALE]
-        for x in range(w):
-            buf += bytes(row[x // SCALE])
+    for row in px:
+        for p in row:
+            buf += bytes(p)
 
     here = os.path.dirname(os.path.abspath(__file__))
     repo = os.path.abspath(os.path.join(here, "..", ".."))
     out = os.path.join(repo, "src", "main", "resources", "assets", "jukeblock", "icon.png")
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    write_png(out, w, h, buf)
+    write_png(out, S, S, buf)
     size = os.path.getsize(out)
-    print(f"wrote {out}  ({w}x{h}, {size / 1024:.1f} KB)")
+    print(f"wrote {out}  ({S}x{S}, {size / 1024:.1f} KB)")
     assert size < 100 * 1024, "icon must stay under 100 KB (PLAN.md phase 4)"
 
-    write_png(os.path.join(here, "icon_preview.png"), w, h, buf)
+    write_png(os.path.join(here, "icon_preview.png"), S, S, buf)
     print("preview written next to this script")
 
 
