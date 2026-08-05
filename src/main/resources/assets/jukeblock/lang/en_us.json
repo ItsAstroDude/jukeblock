@@ -8,5 +8,27 @@
 	"jukeblock.panel.nothing_playing": "Nothing playing",
 	"jukeblock.panel.no_source": "No media source on this system",
 	"jukeblock.panel.no_art": "No artwork",
-	"jukeblock.panel.pinned": "pinned"
+	"jukeblock.panel.pinned": "pinned",
+
+	"jukeblock.config.title": "Jukeblock",
+	"jukeblock.config.category.appearance": "Appearance",
+	"jukeblock.config.category.accent": "Accent colour",
+
+	"jukeblock.config.panelColor": "Panel colour",
+	"jukeblock.config.panelColor.tooltip": "Background of the rail. Text switches between light and dark automatically to stay readable.",
+	"jukeblock.config.panelOpacity": "Panel opacity",
+	"jukeblock.config.panelOpacity.tooltip": "How solid the rail is. Lower values let more of the game show through.",
+	"jukeblock.config.backdropDim": "Backdrop dim",
+	"jukeblock.config.backdropDim.tooltip": "How much the rest of the screen is darkened while the panel is open.",
+	"jukeblock.config.railWidth": "Rail width",
+	"jukeblock.config.railWidth.tooltip": "Width in GUI units, not pixels — at GUI scale 4 one unit is four screen pixels. Vanilla's inventory is 176 for reference.",
+	"jukeblock.config.smoothAlbumArt": "Smooth album art",
+	"jukeblock.config.smoothAlbumArt.tooltip": "Album art arrives at 300x300 and is drawn larger, so without smoothing it looks blocky. Turn off for a crunchier, more pixel-art look.",
+
+	"jukeblock.config.accentFromArt": "Accent from album art",
+	"jukeblock.config.accentFromArt.tooltip": "Pull the highlight colour from the current cover. When off, the fixed colour below is used.",
+	"jukeblock.config.accentColor": "Fixed accent colour",
+	"jukeblock.config.accentColor.tooltip": "Used when 'Accent from album art' is off.",
+	"jukeblock.config.adaptAccent": "Keep accent readable",
+	"jukeblock.config.adaptAccent.tooltip": "Adjusts the accent's brightness so it stays visible against your panel colour — a red cover on a red panel would otherwise disappear. Hue is preserved."
 }

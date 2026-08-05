@@ -11,12 +11,19 @@
 		"sources": "https://github.com/ItsAstroDude/jukeblock"
 	},
 	"license": "MIT",
+	"icon": "assets/jukeblock/icon.png",
 	"environment": "client",
 	"entrypoints": {
 		"client": [
 			{
 				"adapter": "kotlin",
 				"value": "dev.astro.jukeblock.JukeblockClient"
+			}
+		],
+		"modmenu": [
+			{
+				"adapter": "kotlin",
+				"value": "dev.astro.jukeblock.ui.JukeblockModMenu"
 			}
 		]
 	},
@@ -26,5 +33,9 @@
 		"java": ">=25",
 		"fabric-api": "*",
 		"fabric-language-kotlin": ">=1.13.13"
+	},
+	"suggests": {
+		"modmenu": "*",
+		"cloth-config": "*"
 	}
 }

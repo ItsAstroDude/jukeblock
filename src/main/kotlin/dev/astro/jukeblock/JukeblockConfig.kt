@@ -92,6 +92,9 @@ data class JukeblockConfig(
 			}
 		}
 
+		/** Back to the hex form the file stores, so a GUI edit stays hand-editable. */
+		fun toHex(rgb: Int): String = "#%06X".format(rgb and 0xFFFFFF)
+
 		/** Accepts `#RRGGBB`, `RRGGBB`, and `0xRRGGBB`. */
 		private fun parseHex(raw: String, fallback: Int): Int {
 			val cleaned = raw.trim().removePrefix("#").removePrefix("0x").removePrefix("0X")
