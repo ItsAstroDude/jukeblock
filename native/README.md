@@ -6,8 +6,9 @@ Controls** over a flat C ABI, so the JVM side can bind it with JNA and never tou
 ## Why this exists
 
 SMTC is WinRT. There is no usable pure-Java path to it, and it's the one thing that
-makes Jukeblock work with no login, for any player — Spotify free accounts, browser
-YouTube, VLC, local files.
+makes Jukeblock work with no login — Spotify free accounts, browser YouTube, Windows
+Media Player. The limit is that a player has to report to SMTC in the first place; VLC
+notably doesn't, and nothing on our side can change that.
 
 ## Building
 
