@@ -45,5 +45,6 @@
 	"jukeblock.hud.position.hint2": "Snaps to edges and centre · scroll to resize · ESC when done",
 	"jukeblock.hud.position.scale": "Size: %s",
 	"jukeblock.config.hudPlace": "Place the HUD",
-	"jukeblock.config.hudPlace.button": "Move freely…"
+	"jukeblock.config.hudPlace.button": "Move freely…",
+	"jukeblock.panel.switch_source": "Switch to %s"
 }

@@ -154,8 +154,11 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	 */
 	private fun accentFor(config: JukeblockConfig): Int {
 		val base = if (config.accentFromArt) AlbumArt.accent else (0xFF shl 24) or config.accentRgb
-		return if (config.adaptAccentToPanel) Accent.adaptTo(base, config.panelRgb) else base
+		return Accent.adaptToCached(base, config.panelRgb, config.adaptAccentToPanel)
 	}
+
+	/** Panel colour the cached palette was built for; -1 until the first resolve. */
+	private var paletteFor = -1
 
 	/**
 	 * Picks the text/chrome palette for the configured panel colour, and derives the
@@ -163,6 +166,11 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	 * rather than being hardcoded for one background.
 	 */
 	private fun resolvePalette(panel: Int) {
+		// Only changes when the user edits the config, so recomputing it per frame was
+		// pure waste.
+		if (panel == paletteFor) return
+		paletteFor = panel
+
 		val light = Accent.isLight(panel)
 		colorText = if (light) TEXT_ON_LIGHT else TEXT_ON_DARK
 		colorTextDim = if (light) TEXT_ON_LIGHT_DIM else TEXT_ON_DARK_DIM
@@ -182,6 +190,29 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 
 	/** Where the title line was drawn, so it can be clicked to open the track. */
 	private var titleTop: Int? = null
+
+	private data class Rect(val x: Int, val y: Int, val w: Int, val h: Int) {
+		fun contains(mx: Double, my: Double) = mx >= x && mx < x + w && my >= y && my < y + h
+	}
+
+	/** Set only when there's more than one session, i.e. when switching means anything. */
+	private var sourceLabel: Rect? = null
+
+	private fun overSourceLabel(mx: Double, my: Double) = sourceLabel?.contains(mx, my) == true
+
+	/**
+	 * The session a click would switch to.
+	 *
+	 * Cycles rather than opening a list: with two players — which is the normal case, a
+	 * music app and a browser tab — a list is more clicks than the thing it replaces.
+	 */
+	private fun nextSession(track: TrackInfo): dev.astro.jukeblock.media.SessionSummary? {
+		val sources = MediaService.sessions
+		if (sources.size < 2) return null
+		val currentId = MediaService.pinnedSourceId ?: track.sourceId
+		val index = sources.indexOfFirst { it.sourceId == currentId }
+		return sources[(index + 1).mod(sources.size)]
+	}
 
 	private class TransportButton(
 		val command: MediaCommand,
@@ -208,7 +239,6 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 
 	override fun init() {
 		if (openedAtMs == 0L) openedAtMs = System.nanoTime()
-		MediaService.setActive(true)
 		layout()
 	}
 
@@ -239,10 +269,6 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	override fun resize(width: Int, height: Int) {
 		super.resize(width, height)
 		layout()
-	}
-
-	override fun removed() {
-		MediaService.setActive(false)
 	}
 
 	/** The whole point of the panel: the game must not pause behind it. */
@@ -467,9 +493,31 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 
 		// The gap between elapsed and total is dead space, and the source name is short.
 		// Putting it here buys back the whole line it used to occupy at the bottom.
+		//
+		// It doubles as the source picker. SMTC's "current session" follows system focus,
+		// so with Spotify and a browser both open the panel can be showing the wrong one;
+		// clicking here pins the other. The machinery has existed since ABI 2 with no way
+		// to reach it.
+		val sources = MediaService.sessions
+		val switchable = sources.size > 1
 		val source = prettySourceName(track.sourceId) +
 			if (MediaService.pinnedSourceId != null) " *" else ""
-		graphics.centeredText(font, source, x + barWidth / 2, y, colorTextFaint)
+		val sourceWidth = font.width(source)
+		val sourceX = x + (barWidth - sourceWidth) / 2
+		sourceLabel = if (switchable) Rect(sourceX, y, sourceWidth, font.lineHeight) else null
+
+		val sourceHovered = switchable && overSourceLabel(mouseX.toDouble(), mouseY.toDouble())
+		graphics.text(font, source, sourceX, y, if (sourceHovered) accent else colorTextFaint)
+		if (sourceHovered) {
+			graphics.fill(sourceX, y + font.lineHeight, sourceX + sourceWidth, y + font.lineHeight + 1, accent)
+			val next = nextSession(track)
+			if (next != null) {
+				graphics.setTooltipForNextFrame(
+					Component.translatable("jukeblock.panel.switch_source", prettySourceName(next.sourceId)),
+					mouseX, mouseY,
+				)
+			}
+		}
 
 		y += font.lineHeight + SECTION_GAP
 		return y
@@ -706,6 +754,11 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		val track = MediaService.nowPlaying
 		if (overTitle(mx, my, track) && track != null) {
 			openTrack(track)
+			return true
+		}
+
+		if (track != null && overSourceLabel(mx, my)) {
+			nextSession(track)?.let { MediaService.pin(it.sourceId) }
 			return true
 		}
 

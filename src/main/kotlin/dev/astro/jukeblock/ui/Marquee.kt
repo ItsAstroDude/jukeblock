@@ -40,8 +40,13 @@ object Marquee {
 		return (phase - PAUSE).coerceIn(0f, travel).toInt()
 	}
 
-	/** Drops phases for keys no longer on screen, so the map can't grow forever. */
+	/**
+	 * Drops stale phases.
+	 *
+	 * One entry is added per track title ever scrolled, so over a long session this
+	 * would otherwise creep. Called from the client tick with the keys still in use.
+	 */
 	fun forgetAllExcept(keep: Set<String>) {
-		if (phases.size > 16) phases.keys.retainAll(keep)
+		if (phases.size > 8) phases.keys.retainAll(keep)
 	}
 }

@@ -212,6 +212,29 @@ object Accent {
 		return (lighter + 0.05f) / (darker + 0.05f)
 	}
 
+	// Single-entry memo. adaptTo walks HSL and iterates on contrast, and both the panel
+	// and the HUD asked for it on every frame with inputs that only change on a track
+	// change or a config edit.
+	private var memoKey = 0L
+	private var memoValue = 0
+
+	/**
+	 * [adaptTo], memoised. Safe to call from a render loop.
+	 *
+	 * One slot is enough: the panel and the HUD derive the accent from the same source,
+	 * so they ask the same question and the second caller hits the memo.
+	 */
+	fun adaptToCached(accent: Int, background: Int, enabled: Boolean): Int {
+		if (!enabled) return accent
+		val key = (accent.toLong() shl 32) or (background.toLong() and 0xFFFFFFFFL)
+		// A real result always carries alpha, so 0 can only mean "nothing cached yet".
+		if (key == memoKey && memoValue != 0) return memoValue
+		val result = adaptTo(accent, background)
+		memoKey = key
+		memoValue = result
+		return result
+	}
+
 	/**
 	 * Nudges [accent] until it stands out against [background].
 	 *

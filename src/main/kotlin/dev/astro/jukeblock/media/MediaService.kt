@@ -19,11 +19,17 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 object MediaService {
 
-	/** Poll cadence while the panel or HUD is visible. */
-	private const val ACTIVE_INTERVAL_MS = 500L
-
-	/** Poll cadence when nothing is on screen — still tracks changes, costs almost nothing. */
-	private const val IDLE_INTERVAL_MS = 2_000L
+	/**
+	 * How often to ask the bridge what's playing.
+	 *
+	 * [BACKGROUND] exists for the HUD's pop-up mode: nothing is on screen, but a track
+	 * change has to be *noticed* promptly or the toast arrives late.
+	 */
+	enum class Cadence(val intervalMs: Long) {
+		INTERACTIVE(500L),
+		BACKGROUND(1_000L),
+		IDLE(2_000L),
+	}
 
 	/** Session enumeration is ~5x the cost of a poll and changes rarely. */
 	private const val SESSION_SCAN_EVERY_MS = 5_000L
@@ -36,7 +42,17 @@ object MediaService {
 	private var lastSessionScan = 0L
 
 	@Volatile
-	private var interval = IDLE_INTERVAL_MS
+	private var interval = Cadence.IDLE.intervalMs
+
+	/**
+	 * Whether to keep [volume] fresh.
+	 *
+	 * Enumerating audio sessions opens a handle per process and is by far the most
+	 * expensive call the bridge makes, so it only runs while something is actually
+	 * showing the slider.
+	 */
+	@Volatile
+	private var trackVolume = false
 
 	/** Latest snapshot. Null when nothing is playing or no source is available. */
 	@Volatile
@@ -98,11 +114,10 @@ object MediaService {
 		sessions = emptyList()
 	}
 
-	/**
-	 * Tells the service whether anything is on screen, so it can back off when not.
-	 */
-	fun setActive(active: Boolean) {
-		interval = if (active) ACTIVE_INTERVAL_MS else IDLE_INTERVAL_MS
+	/** Sets the poll rate, and whether volume is worth keeping fresh. */
+	fun setCadence(cadence: Cadence, volumeVisible: Boolean) {
+		interval = cadence.intervalMs
+		trackVolume = volumeVisible
 	}
 
 	/** Pin to a specific player, or pass null to follow the system's current session. */
@@ -209,7 +224,7 @@ object MediaService {
 		if (now - lastSessionScan >= SESSION_SCAN_EVERY_MS) {
 			lastSessionScan = now
 			sessions = src.sessions()
-			volume = src.volume(pinnedSourceId) ?: -1f
+			volume = if (trackVolume) src.volume(pinnedSourceId) ?: -1f else -1f
 		}
 	}
 }

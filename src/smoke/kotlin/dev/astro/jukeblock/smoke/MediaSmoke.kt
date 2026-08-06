@@ -25,7 +25,7 @@ object MediaSmoke {
 			println("FAIL: no media source available")
 			return
 		}
-		MediaService.setActive(true)
+		MediaService.setCadence(MediaService.Cadence.INTERACTIVE, volumeVisible = true)
 		println("source: ${MediaService.sourceName}")
 		println()
 
