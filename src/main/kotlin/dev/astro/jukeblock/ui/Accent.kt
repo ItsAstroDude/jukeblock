@@ -212,26 +212,30 @@ object Accent {
 		return (lighter + 0.05f) / (darker + 0.05f)
 	}
 
-	// Single-entry memo. adaptTo walks HSL and iterates on contrast, and both the panel
-	// and the HUD asked for it on every frame with inputs that only change on a track
-	// change or a config edit.
-	private var memoKey = 0L
-	private var memoValue = 0
+	// adaptTo walks HSL and iterates on contrast, and both the panel and the HUD ask for
+	// it every frame with inputs that only change on a track change or a config edit.
+	private val memoKeys = LongArray(2)
+	private val memoValues = IntArray(2)
+	private var memoNext = 0
 
 	/**
 	 * [adaptTo], memoised. Safe to call from a render loop.
 	 *
-	 * One slot is enough: the panel and the HUD derive the accent from the same source,
-	 * so they ask the same question and the second caller hits the memo.
+	 * Two slots, one per caller. A single slot was enough only while the HUD inherited the
+	 * panel's colours; once it could be given its own, the two asked different questions on
+	 * alternating frames and the cache never hit.
 	 */
 	fun adaptToCached(accent: Int, background: Int, enabled: Boolean): Int {
 		if (!enabled) return accent
 		val key = (accent.toLong() shl 32) or (background.toLong() and 0xFFFFFFFFL)
 		// A real result always carries alpha, so 0 can only mean "nothing cached yet".
-		if (key == memoKey && memoValue != 0) return memoValue
+		for (i in memoKeys.indices) {
+			if (memoKeys[i] == key && memoValues[i] != 0) return memoValues[i]
+		}
 		val result = adaptTo(accent, background)
-		memoKey = key
-		memoValue = result
+		memoKeys[memoNext] = key
+		memoValues[memoNext] = result
+		memoNext = (memoNext + 1) % memoKeys.size
 		return result
 	}
 
