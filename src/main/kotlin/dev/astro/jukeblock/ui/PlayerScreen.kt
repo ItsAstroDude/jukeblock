@@ -538,8 +538,25 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			)
 		}
 
-		y += font.lineHeight + SECTION_GAP
-		return y
+		y += font.lineHeight
+
+		// Spell the marker out. A bare asterisk is a rune until somebody tells you what it
+		// means, and the tooltip that would explain it only appears if you already suspect
+		// the label does something. Costs a line only while pinned, so the panel stays as
+		// tight as it was for everyone who never pins.
+		if (MediaService.pinnedSourceId != null) {
+			y += 2
+			graphics.centeredText(
+				font,
+				Component.translatable("jukeblock.panel.pin_hint"),
+				x + barWidth / 2,
+				y,
+				colorTextFaint,
+			)
+			y += font.lineHeight
+		}
+
+		return y + SECTION_GAP
 	}
 
 	/**
