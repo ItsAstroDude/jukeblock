@@ -3,6 +3,7 @@ package dev.astro.jukeblock.ui
 import com.terraformersmc.modmenu.api.ConfigScreenFactory
 import com.terraformersmc.modmenu.api.ModMenuApi
 import dev.astro.jukeblock.JukeblockConfig
+import dev.astro.jukeblock.Theme
 import me.shedaniel.clothconfig2.api.ConfigBuilder
 import me.shedaniel.clothconfig2.api.Requirement
 import net.fabricmc.loader.api.FabricLoader
@@ -148,6 +149,54 @@ class JukeblockModMenu : ModMenuApi {
 					.setDefaultValue(false)
 					.setSaveConsumer { config.hudHideWhenPaused = it }
 					.build(),
+			)
+
+			// --- themes ---------------------------------------------------------
+			val themesCategory = builder.getOrCreateCategory(Component.translatable("jukeblock.config.category.themes"))
+			val themes = Theme.all()
+			val themeNames = themes.map { it.name }.toTypedArray()
+
+			// Held so the Apply button can read the current selection. Cloth entries are
+			// ValueHolders, which is exactly what's needed and saves tracking it twice.
+			val themePicker = entries.startSelector(
+				Component.translatable("jukeblock.config.theme"),
+				themeNames,
+				themeNames.firstOrNull() ?: "",
+			)
+				.setDefaultValue(themeNames.firstOrNull() ?: "")
+				.setTooltip(Component.translatable("jukeblock.config.theme.tooltip"))
+				.build()
+			themesCategory.addEntry(themePicker)
+
+			themesCategory.addEntry(
+				ButtonConfigEntry(
+					Component.translatable("jukeblock.config.themeApply"),
+					Component.translatable("jukeblock.config.themeApply.button"),
+				) {
+					// Applying writes into the live config, so the other tabs' entries are
+					// now stale. Reopening is the honest way to show that.
+					themes.firstOrNull { it.name == themePicker.value }?.apply()
+					val client = net.minecraft.client.Minecraft.getInstance()
+					client.gui.setScreen(getModConfigScreenFactory().create(parent))
+				},
+			)
+
+			themesCategory.addEntry(
+				ButtonConfigEntry(
+					Component.translatable("jukeblock.config.themeExport"),
+					Component.translatable("jukeblock.config.themeExport.button"),
+				) {
+					// Save first: exporting what's on screen rather than what's on disk is
+					// what anyone pressing this expects.
+					JukeblockConfig.save()
+					Theme.exportCurrent()
+				},
+			)
+
+			themesCategory.addEntry(
+				entries.startTextDescription(
+					Component.translatable("jukeblock.config.themeFolder", Theme.directory.toString()),
+				).build(),
 			)
 
 			val accent = builder.getOrCreateCategory(Component.translatable("jukeblock.config.category.accent"))
