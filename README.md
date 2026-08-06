@@ -3,15 +3,19 @@
 **Universal now-playing panel for Minecraft.** Works the second you install it, with no
 login, for whatever you're actually listening to.
 
-Spotify (free accounts included), browser YouTube, VLC, local files, Apple Music,
-anything else that reports itself to Windows — Jukeblock reads them all through the same
-system API the volume flyout uses. No companion app, no developer account, no Premium,
-no OAuth.
+Spotify (free accounts included), browser YouTube, Windows Media Player — anything that
+reports itself to Windows. Jukeblock reads it through the same system API as the volume
+flyout. No companion app, no developer account, no Premium, no OAuth.
 
 > **Windows only.** The whole zero-setup story rests on the Windows System Media
 > Transport Controls, which have no Linux or macOS equivalent. On other platforms the mod
 > loads and stays quiet: the panel says there's no media source, and nothing else is
 > affected.
+
+> **A player has to opt in.** SMTC only knows about apps that report to it. Most do —
+> but **VLC doesn't**, so Jukeblock can't see it. If your player doesn't show up in
+> Windows' own media popup (the one above the volume slider), Jukeblock won't see it
+> either. That popup is the honest test.
 
 ---
 
