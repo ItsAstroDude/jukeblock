@@ -5,7 +5,6 @@ import com.terraformersmc.modmenu.api.ModMenuApi
 import dev.astro.jukeblock.JukeblockConfig
 import me.shedaniel.clothconfig2.api.ConfigBuilder
 import me.shedaniel.clothconfig2.api.Requirement
-import net.minecraft.network.chat.ClickEvent
 import net.fabricmc.loader.api.FabricLoader
 import net.minecraft.network.chat.Component
 
@@ -101,16 +100,17 @@ class JukeblockModMenu : ModMenuApi {
 				.build()
 			hud.addEntry(cornerEntry)
 
-			// Runs the client command, which opens the drag-to-place screen. Cloth has no
-			// button entry, but its text entries do dispatch click events.
+			// A real button widget. Clickable text can't do this: Cloth dispatches entry
+			// clicks to Screen.defaultHandleClickEvent, which doesn't handle RunCommand.
 			hud.addEntry(
-				entries.startTextDescription(
-					Component.translatable("jukeblock.config.hudPlace").withStyle { style ->
-						style.withClickEvent(ClickEvent.RunCommand("/jukeblock hud"))
-							.withUnderlined(true)
-							.withColor(0x53E076)
-					},
-				).build(),
+				ButtonConfigEntry(
+					Component.translatable("jukeblock.config.hudPlace"),
+					Component.translatable("jukeblock.config.hudPlace.button"),
+				) {
+					val client = net.minecraft.client.Minecraft.getInstance()
+					// Keep the config screen as the parent so ESC comes back here.
+					client.gui.setScreen(HudPositionScreen(client.gui.screen()))
+				},
 			)
 
 			hud.addEntry(
