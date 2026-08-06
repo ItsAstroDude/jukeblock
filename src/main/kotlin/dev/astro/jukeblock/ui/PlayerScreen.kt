@@ -828,7 +828,7 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			}
 		}
 
-		// Scroll over the progress bar to seek (PLAN §6.5).
+		// Scroll over the progress bar to seek.
 		val track = MediaService.nowPlaying
 		if (track != null && track.supports(Capability.SEEK) && track.durationMs > 0 && overProgressBar(mouseX, mouseY)) {
 			val step = 5_000L
