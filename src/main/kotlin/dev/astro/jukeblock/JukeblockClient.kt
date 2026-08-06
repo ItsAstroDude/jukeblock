@@ -6,6 +6,7 @@ import dev.astro.jukeblock.media.MediaService
 import dev.astro.jukeblock.ui.AlbumArt
 import dev.astro.jukeblock.ui.HudPositionScreen
 import dev.astro.jukeblock.ui.JukeblockKeys
+import dev.astro.jukeblock.ui.Marquee
 import dev.astro.jukeblock.ui.NowPlayingHud
 import dev.astro.jukeblock.ui.PlayerScreen
 import net.fabricmc.api.ClientModInitializer
@@ -34,6 +35,23 @@ class JukeblockClient : ClientModInitializer {
 			// new title from the poll but kept the previous track's cover and accent
 			// colour — visible on every track change.
 			AlbumArt.sync(MediaService.nowPlaying)
+
+			// One place decides how hard to poll. The panel used to set this itself, which
+			// left an always-on HUD running at the idle rate.
+			val panelOpen = client.gui.screen() is PlayerScreen
+			MediaService.setCadence(
+				when {
+					panelOpen || NowPlayingHud.isShowing() -> MediaService.Cadence.INTERACTIVE
+					NowPlayingHud.needsUpdates() -> MediaService.Cadence.BACKGROUND
+					else -> MediaService.Cadence.IDLE
+				},
+				// The slider only exists in the panel.
+				volumeVisible = panelOpen,
+			)
+
+			Marquee.forgetAllExcept(MediaService.nowPlaying?.let {
+				setOf("panel:" + it.trackKey, "hud:" + it.trackKey)
+			} ?: emptySet())
 
 			while (JukeblockKeys.toggle.consumeClick()) {
 				// Only from in-world: opening the rail on top of another screen would

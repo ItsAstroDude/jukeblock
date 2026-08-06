@@ -104,6 +104,19 @@ object NowPlayingHud : HudElement {
 		shuffle = null, repeat = null, hasThumbnail = false, capabilities = emptySet(),
 	)
 
+	/** True while the HUD is on screen, or waiting to notice a change so it can pop up. */
+	fun needsUpdates(): Boolean = when (JukeblockConfig.current.hudModeEnum) {
+		HudMode.OFF -> false
+		HudMode.ALWAYS, HudMode.ON_TRACK_CHANGE -> true
+	}
+
+	/** True while a toast is actually visible. */
+	fun isShowing(): Boolean = when (JukeblockConfig.current.hudModeEnum) {
+		HudMode.OFF -> false
+		HudMode.ALWAYS -> true
+		HudMode.ON_TRACK_CHANGE -> toastUntilMs > System.currentTimeMillis()
+	}
+
 	fun register() {
 		HudElementRegistry.addLast(Identifier.fromNamespaceAndPath(Jukeblock.MOD_ID, "now_playing"), this)
 	}
@@ -180,7 +193,7 @@ object NowPlayingHud : HudElement {
 
 		val accent = if (config.accentFromArt) AlbumArt.accent else (0xFF shl 24) or config.accentRgb
 		val panel = config.panelArgb
-		val adapted = if (config.adaptAccentToPanel) Accent.adaptTo(accent, config.panelRgb) else accent
+		val adapted = Accent.adaptToCached(accent, config.panelRgb, config.adaptAccentToPanel)
 
 		fun fade(color: Int): Int {
 			val a = ((color ushr 24 and 0xFF) / 255f * alpha * 255f).toInt().coerceIn(0, 255)
