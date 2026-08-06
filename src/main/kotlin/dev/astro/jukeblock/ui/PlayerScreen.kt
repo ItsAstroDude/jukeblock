@@ -399,7 +399,12 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			val drawW = (srcW * scale).toInt().coerceAtLeast(1)
 			val drawH = (srcH * scale).toInt().coerceAtLeast(1)
 			val ax = originX + (railWidth - drawW) / 2
-			val ay = top + (size - drawH) / 2
+			// Top-aligned, NOT centred in the reserved box. `size` is only an upper bound;
+			// a 16:9 browser thumbnail uses maybe half of it, and centring pushed the image
+			// down by half the slack while the layout below still flowed from `top + drawH`.
+			// Everything after the art then drew on top of the cover — visible the moment
+			// you switched from Spotify's square art to a browser's wide one.
+			val ay = top
 
 			// Soft glow behind the art, in the extracted accent.
 			graphics.fill(ax - 2, ay - 2, ax + drawW + 2, ay + drawH + 2, Accent.withAlpha(accent, 0.25f))
