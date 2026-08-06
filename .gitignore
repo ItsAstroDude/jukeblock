@@ -32,6 +32,10 @@ bin/
 
 run/
 
+# gradle/loom writes these next to the project; machine-local noise
+
+logs/
+
 # java
 
 hs_err_*.log
