@@ -12,7 +12,7 @@ import kotlin.math.pow
  *
  * ⚠️ The clamping is the whole point. Raw cover colours are frequently near-black or
  * near-white and become invisible the moment you use them — this is the `ensureReadable`
- * lesson already paid for in playlist.lens, and PLAN.md §6.2 calls it out explicitly.
+ * lesson already paid for in playlist.lens.
  * Never use an extracted colour without passing it through [clampForDarkUi].
  *
  * The accent is only ever applied to the progress fill, control highlights and the glow

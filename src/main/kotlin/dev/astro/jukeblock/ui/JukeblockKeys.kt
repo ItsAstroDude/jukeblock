@@ -9,7 +9,7 @@ import org.lwjgl.glfw.GLFW
  * Keybinds. The panel toggle defaults to `Z`, which is free in vanilla.
  *
  * The global transport binds work without opening the panel — the common case is
- * skipping a track mid-fight, and that shouldn't need a screen (PLAN.md §6.5).
+ * skipping a track mid-fight, and that shouldn't need a screen.
  */
 object JukeblockKeys {
 

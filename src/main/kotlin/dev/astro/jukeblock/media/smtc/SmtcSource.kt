@@ -15,7 +15,7 @@ import java.nio.file.Path
  * The v1.0 media source: whatever Windows itself is playing.
  *
  * Zero auth, zero setup, and it sees every player — Spotify (free accounts included),
- * browser YouTube, VLC, local files. This is the reason Jukeblock exists; see PLAN.md §2.
+ * browser YouTube, VLC, local files. This is the reason Jukeblock exists.
  */
 class SmtcSource private constructor(private val bridge: SmtcBridge) : MediaSource {
 

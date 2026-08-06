@@ -53,3 +53,7 @@ tools/jna-spike/out/
 
 # vanilla textures extracted at icon-generation time (not redistributed in-repo)
 tools/icons/vanilla/
+
+# private build plan — stays on disk, never in the public repo
+
+PLAN.md
