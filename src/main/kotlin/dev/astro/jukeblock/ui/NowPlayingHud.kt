@@ -22,6 +22,15 @@ import kotlin.math.roundToInt
  */
 enum class HudCorner { TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT, FREE }
 
+/** How much the HUD shows. */
+enum class HudLayout {
+	/** Art, title, artist, progress. */
+	FULL,
+
+	/** Art, title, progress — the artist line is what most titles already imply. */
+	COMPACT,
+}
+
 enum class HudMode {
 	/** Never shown. */
 	OFF,
@@ -48,11 +57,33 @@ enum class HudMode {
  */
 object NowPlayingHud : HudElement {
 
-	private const val ART = 26
-	private const val PAD = 4
-	private const val GAP = 5
-	private const val WIDTH = 140
 	private const val PROGRESS_H = 2
+
+	/** Inset from the screen edge for the four fixed corners, independent of layout. */
+	private const val SCREEN_MARGIN = 4
+
+	/**
+	 * Per-layout dimensions, in GUI units.
+	 *
+	 * Kept in one place because [bounds] and [draw] must agree exactly — the placement
+	 * screen outlines and hit-tests what bounds reports, so any drift shows up as a box
+	 * that doesn't match what you're dragging.
+	 */
+	private data class Metrics(
+		val art: Int,
+		val width: Int,
+		val pad: Int,
+		val gap: Int,
+		val showArtist: Boolean,
+	) {
+		val height: Int get() = art + pad * 2
+	}
+
+	private val FULL = Metrics(art = 26, width = 140, pad = 4, gap = 5, showArtist = true)
+	private val COMPACT = Metrics(art = 16, width = 104, pad = 3, gap = 4, showArtist = false)
+
+	private fun metrics(config: JukeblockConfig): Metrics =
+		if (config.hudLayoutEnum == HudLayout.COMPACT) COMPACT else FULL
 
 	/** Fade at each end of a toast. */
 	private const val FADE_MS = 220f
@@ -67,9 +98,10 @@ object NowPlayingHud : HudElement {
 
 	fun bounds(screenW: Int, screenH: Int): Bounds {
 		val config = JukeblockConfig.current
+		val m = metrics(config)
 		val scale = config.hudScale.coerceIn(0.6f, 2.5f)
-		val w = (WIDTH * scale).toInt()
-		val h = ((ART + PAD * 2) * scale).toInt()
+		val w = (m.width * scale).toInt()
+		val h = (m.height * scale).toInt()
 
 		if (config.hudCornerEnum == HudCorner.FREE) {
 			// Stored as a fraction of the free space, so the HUD stays where it was put
@@ -80,12 +112,12 @@ object NowPlayingHud : HudElement {
 		}
 
 		val x = when (config.hudCornerEnum) {
-			HudCorner.TOP_RIGHT, HudCorner.BOTTOM_RIGHT -> screenW - w - PAD
-			else -> PAD
+			HudCorner.TOP_RIGHT, HudCorner.BOTTOM_RIGHT -> screenW - w - SCREEN_MARGIN
+			else -> SCREEN_MARGIN
 		} + config.hudOffsetX
 		val y = when (config.hudCornerEnum) {
-			HudCorner.BOTTOM_LEFT, HudCorner.BOTTOM_RIGHT -> screenH - h - PAD
-			else -> PAD
+			HudCorner.BOTTOM_LEFT, HudCorner.BOTTOM_RIGHT -> screenH - h - SCREEN_MARGIN
+			else -> SCREEN_MARGIN
 		} + config.hudOffsetY
 		return Bounds(x, y, w, h)
 	}
@@ -177,7 +209,8 @@ object NowPlayingHud : HudElement {
 	private fun draw(graphics: GuiGraphicsExtractor, track: TrackInfo, alpha: Float, config: JukeblockConfig) {
 		val client = Minecraft.getInstance()
 		val font = client.font
-		val height = ART + PAD * 2
+		val m = metrics(config)
+		val height = m.height
 
 		val box = bounds(graphics.guiWidth(), graphics.guiHeight())
 		val scale = config.hudScale.coerceIn(0.6f, 2.5f)
@@ -191,63 +224,71 @@ object NowPlayingHud : HudElement {
 		val x = 0
 		val y = 0
 
-		val accent = if (config.accentFromArt) AlbumArt.accent else (0xFF shl 24) or config.accentRgb
-		val panel = config.panelArgb
-		val adapted = Accent.adaptToCached(accent, config.panelRgb, config.adaptAccentToPanel)
+		// Resolved by the config, which knows whether the HUD is following the panel.
+		val accent = if (config.hudUsesArtAccent) AlbumArt.accent else (0xFF shl 24) or config.hudFixedAccentRgb
+		val panel = config.hudSurfaceArgb
+		val surfaceRgb = config.hudSurfaceRgb
+		val adapted = Accent.adaptToCached(accent, surfaceRgb, config.hudAdaptsAccent)
 
 		fun fade(color: Int): Int {
 			val a = ((color ushr 24 and 0xFF) / 255f * alpha * 255f).toInt().coerceIn(0, 255)
 			return (color and 0x00FFFFFF) or (a shl 24)
 		}
 
-		graphics.fill(x, y, x + WIDTH, y + height, fade(panel))
+		graphics.fill(x, y, x + m.width, y + height, fade(panel))
 		// Accent edge, matching the panel's own hairline.
 		graphics.fill(x, y, x + 1, y + height, fade(Accent.withAlpha(adapted, 0.8f)))
 
 		// Album art, fitted rather than stretched — browser thumbnails are 16:9.
 		val art = AlbumArt.texture
-		val artX = x + PAD
-		val artY = y + PAD
+		val artX = x + m.pad
+		val artY = y + m.pad
 		if (art != null && AlbumArt.artWidth > 0) {
 			val srcW = AlbumArt.artWidth
 			val srcH = AlbumArt.artHeight.coerceAtLeast(1)
 			val w: Int
 			val h: Int
 			if (srcW >= srcH) {
-				w = ART
-				h = max(1, ART * srcH / srcW)
+				w = m.art
+				h = max(1, m.art * srcH / srcW)
 			} else {
-				h = ART
-				w = max(1, ART * srcW / srcH)
+				h = m.art
+				w = max(1, m.art * srcW / srcH)
 			}
-			graphics.blit(art, artX + (ART - w) / 2, artY + (ART - h) / 2, artX + (ART - w) / 2 + w, artY + (ART - h) / 2 + h, 0f, 1f, 0f, 1f)
+			graphics.blit(art, artX + (m.art - w) / 2, artY + (m.art - h) / 2, artX + (m.art - w) / 2 + w, artY + (m.art - h) / 2 + h, 0f, 1f, 0f, 1f)
 		} else {
-			graphics.fill(artX, artY, artX + ART, artY + ART, fade(Accent.withAlpha(adapted, 0.25f)))
+			graphics.fill(artX, artY, artX + m.art, artY + m.art, fade(Accent.withAlpha(adapted, 0.25f)))
 		}
 
-		val textX = artX + ART + GAP
-		val textW = WIDTH - PAD - (textX - x)
-		val light = Accent.isLight(config.panelRgb)
+		val textX = artX + m.art + m.gap
+		val textW = m.width - m.pad - (textX - x)
+		val light = Accent.isLight(surfaceRgb)
 		val title = fade(if (light) 0xFF16161A.toInt() else 0xFFF4F4F7.toInt())
 		val sub = fade(if (light) 0xFF4A4A55.toInt() else 0xFFA8A8B4.toInt())
 
+		// Compact drops the artist, so the title sits a touch lower to stay optically
+		// centred against the art rather than hugging the top edge.
+		val titleY = if (m.showArtist) y + m.pad else y + m.pad + 1
+
 		// Marquee only the title; the artist gets a plain ellipsis. Two things scrolling
 		// at once in the corner of the screen is noise, not information.
-		graphics.enableScissor(textX, y + PAD, textX + textW, y + PAD + font.lineHeight)
+		graphics.enableScissor(textX, titleY, textX + textW, titleY + font.lineHeight)
 		val titleW = font.width(track.title)
 		val offset = Marquee.offset("hud:" + track.trackKey, titleW, textW)
-		graphics.text(font, track.title, textX - offset, y + PAD, title)
+		graphics.text(font, track.title, textX - offset, titleY, title)
 		graphics.disableScissor()
 
-		val artist = if (font.width(track.artist) > textW) {
-			font.plainSubstrByWidth(track.artist, textW - font.width("...")) + "..."
-		} else {
-			track.artist
+		if (m.showArtist) {
+			val artist = if (font.width(track.artist) > textW) {
+				font.plainSubstrByWidth(track.artist, textW - font.width("...")) + "..."
+			} else {
+				track.artist
+			}
+			graphics.text(font, artist, textX, y + m.pad + font.lineHeight + 2, sub)
 		}
-		graphics.text(font, artist, textX, y + PAD + font.lineHeight + 2, sub)
 
 		if (track.durationMs > 0) {
-			val barY = y + height - PAD - PROGRESS_H
+			val barY = y + height - m.pad - PROGRESS_H
 			val barW = textW
             val fill = (barW * track.progress).roundToInt().coerceIn(0, barW)
 			graphics.fill(textX, barY, textX + barW, barY + PROGRESS_H, fade(Accent.withAlpha(adapted, 0.25f)))

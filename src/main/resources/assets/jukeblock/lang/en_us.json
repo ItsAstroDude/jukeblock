@@ -55,5 +55,15 @@
 	"jukeblock.config.themeApply.button": "Apply",
 	"jukeblock.config.themeExport": "Save current look as a theme",
 	"jukeblock.config.themeExport.button": "Export…",
-	"jukeblock.config.themeFolder": "§7Drop .json themes into %s to see them in the list."
+	"jukeblock.config.themeFolder": "§7Drop .json themes into %s to see them in the list.",
+	"jukeblock.config.hudLayout": "Layout",
+	"jukeblock.config.hudLayout.tooltip": "FULL shows art, title, artist and progress. COMPACT drops the artist line and shrinks everything.",
+	"jukeblock.config.hudFollowTheme": "Follow main theme",
+	"jukeblock.config.hudFollowTheme.tooltip": "Use the panel's colours for the HUD too. Turn off to give the HUD its own — it sits over the world rather than a dimmed backdrop, so it often wants to be more solid.",
+	"jukeblock.config.hudPanelColor": "HUD colour",
+	"jukeblock.config.hudPanelOpacity": "HUD opacity",
+	"jukeblock.config.hudPanelOpacity.tooltip": "The HUD has no backdrop dimming behind it, so it usually needs more opacity than the panel to stay readable over bright terrain.",
+	"jukeblock.config.hudAccentFromArt": "HUD accent from album art",
+	"jukeblock.config.hudAccentColor": "HUD fixed accent",
+	"jukeblock.config.hudAdaptAccent": "Keep HUD accent readable"
 }

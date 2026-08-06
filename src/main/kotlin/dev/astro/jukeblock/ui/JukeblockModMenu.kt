@@ -145,9 +145,79 @@ class JukeblockModMenu : ModMenuApi {
 			)
 
 			hud.addEntry(
+				entries.startEnumSelector(
+					Component.translatable("jukeblock.config.hudLayout"),
+					HudLayout::class.java,
+					config.hudLayoutEnum,
+				)
+					.setDefaultValue(HudLayout.FULL)
+					.setTooltip(Component.translatable("jukeblock.config.hudLayout.tooltip"))
+					.setSaveConsumer { config.hudLayout = it.name }
+					.build(),
+			)
+
+			hud.addEntry(
 				entries.startBooleanToggle(Component.translatable("jukeblock.config.hudHideWhenPaused"), config.hudHideWhenPaused)
 					.setDefaultValue(false)
 					.setSaveConsumer { config.hudHideWhenPaused = it }
+					.build(),
+			)
+
+			// --- HUD colours ----------------------------------------------------
+			val followEntry = entries.startBooleanToggle(
+				Component.translatable("jukeblock.config.hudFollowTheme"),
+				config.hudFollowPanelTheme,
+			)
+				.setDefaultValue(true)
+				.setTooltip(Component.translatable("jukeblock.config.hudFollowTheme.tooltip"))
+				.setSaveConsumer { config.hudFollowPanelTheme = it }
+				.build()
+			hud.addEntry(followEntry)
+
+			// Showing overrides that aren't in effect would just invite the question of
+			// why editing them changes nothing.
+			val notFollowing = Requirement.isFalse(followEntry)
+
+			hud.addEntry(
+				entries.startColorField(Component.translatable("jukeblock.config.hudPanelColor"), config.hudSurfaceRgb)
+					.setDefaultValue(0x2A2A33)
+					.setDisplayRequirement(notFollowing)
+					.setSaveConsumer { config.hudPanelColor = JukeblockConfig.toHex(it) }
+					.build(),
+			)
+
+			hud.addEntry(
+				entries.startIntSlider(Component.translatable("jukeblock.config.hudPanelOpacity"), config.hudPanelOpacity, 0, 100)
+					.setDefaultValue(93)
+					.setTextGetter { percent(it) }
+					.setTooltip(Component.translatable("jukeblock.config.hudPanelOpacity.tooltip"))
+					.setDisplayRequirement(notFollowing)
+					.setSaveConsumer { config.hudPanelOpacity = it }
+					.build(),
+			)
+
+			hud.addEntry(
+				entries.startBooleanToggle(Component.translatable("jukeblock.config.hudAccentFromArt"), config.hudAccentFromArt)
+					.setDefaultValue(true)
+					.setDisplayRequirement(notFollowing)
+					.setSaveConsumer { config.hudAccentFromArt = it }
+					.build(),
+			)
+
+			hud.addEntry(
+				entries.startColorField(Component.translatable("jukeblock.config.hudAccentColor"), config.hudFixedAccentRgb)
+					.setDefaultValue(0x53E076)
+					.setDisplayRequirement(notFollowing)
+					.setSaveConsumer { config.hudAccentColor = JukeblockConfig.toHex(it) }
+					.build(),
+			)
+
+			hud.addEntry(
+				entries.startBooleanToggle(Component.translatable("jukeblock.config.hudAdaptAccent"), config.hudAdaptAccent)
+					.setDefaultValue(true)
+					.setTooltip(Component.translatable("jukeblock.config.adaptAccent.tooltip"))
+					.setDisplayRequirement(notFollowing)
+					.setSaveConsumer { config.hudAdaptAccent = it }
 					.build(),
 			)
 
