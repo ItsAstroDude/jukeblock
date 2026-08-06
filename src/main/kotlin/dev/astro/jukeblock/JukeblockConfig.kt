@@ -72,6 +72,24 @@ data class JukeblockConfig(
 
 	/** Overall HUD size multiplier. Set by scrolling in the drag-to-place screen. */
 	var hudScale: Float = 1.0f,
+
+	/** `FULL` (art, title, artist, progress) or `COMPACT` (art, title, progress). */
+	var hudLayout: String = "FULL",
+
+	/**
+	 * Take the HUD's colours from the main panel.
+	 *
+	 * On by default so the two read as one mod. Turning it off exposes the overrides
+	 * below — the HUD sits over the world rather than over a dimmed backdrop, so wanting
+	 * it more opaque than the panel is a reasonable thing to want.
+	 */
+	var hudFollowPanelTheme: Boolean = true,
+
+	var hudPanelColor: String = "#2A2A33",
+	var hudPanelOpacity: Int = 93,
+	var hudAccentFromArt: Boolean = true,
+	var hudAccentColor: String = "#53E076",
+	var hudAdaptAccent: Boolean = true,
 ) {
 	val hudModeEnum: dev.astro.jukeblock.ui.HudMode
 		get() = runCatching { dev.astro.jukeblock.ui.HudMode.valueOf(hudMode) }
@@ -80,6 +98,31 @@ data class JukeblockConfig(
 	val hudCornerEnum: dev.astro.jukeblock.ui.HudCorner
 		get() = runCatching { dev.astro.jukeblock.ui.HudCorner.valueOf(hudCorner) }
 			.getOrDefault(dev.astro.jukeblock.ui.HudCorner.TOP_LEFT)
+
+	val hudLayoutEnum: dev.astro.jukeblock.ui.HudLayout
+		get() = runCatching { dev.astro.jukeblock.ui.HudLayout.valueOf(hudLayout) }
+			.getOrDefault(dev.astro.jukeblock.ui.HudLayout.FULL)
+
+	// --- resolved HUD theme ---------------------------------------------------
+	// One place decides whether the HUD follows the panel, so the renderer never has to.
+
+	val hudSurfaceRgb: Int
+		get() = if (hudFollowPanelTheme) panelRgb else parseHex(hudPanelColor, 0x2A2A33)
+
+	val hudSurfaceArgb: Int
+		get() {
+			val opacity = (if (hudFollowPanelTheme) panelOpacity else hudPanelOpacity).coerceIn(0, 100)
+			return (opacity * 255 / 100 shl 24) or (hudSurfaceRgb and 0xFFFFFF)
+		}
+
+	val hudUsesArtAccent: Boolean
+		get() = if (hudFollowPanelTheme) accentFromArt else hudAccentFromArt
+
+	val hudFixedAccentRgb: Int
+		get() = if (hudFollowPanelTheme) accentRgb else parseHex(hudAccentColor, 0x53E076)
+
+	val hudAdaptsAccent: Boolean
+		get() = if (hudFollowPanelTheme) adaptAccentToPanel else hudAdaptAccent
 
 	val panelRgb: Int get() = parseHex(panelColor, 0x2A2A33)
 	val accentRgb: Int get() = parseHex(accentColor, 0x53E076)
@@ -98,6 +141,7 @@ data class JukeblockConfig(
 		hudOffsetY = hudOffsetY.coerceIn(-400, 400),
 		hudFreeX = hudFreeX.coerceIn(0f, 1f),
 		hudFreeY = hudFreeY.coerceIn(0f, 1f),
+		hudPanelOpacity = hudPanelOpacity.coerceIn(0, 100),
 		hudScale = hudScale.coerceIn(0.6f, 2.5f),
 	)
 
