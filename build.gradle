@@ -8,6 +8,19 @@ group = project.maven_group
 
 repositories {
 	mavenCentral()
+
+	// Where `slimJna` drops the trimmed JNA. Loom's `include` only accepts a resolved
+	// module — it rejects a plain file dependency for having no capabilities — so the
+	// output has to be reachable as coordinates rather than as a path.
+	ivy {
+		url = file("${buildDir}/slim-jna-out").toURI()
+		patternLayout {
+			artifact "[artifact]-[revision].[ext]"
+		}
+		metadataSources { artifact() }
+		// Scoped, so this repository is never consulted for anything else.
+		content { includeModule("jukeblock.slim", "jna") }
+	}
 }
 
 loom {
@@ -28,6 +41,64 @@ sourceSets {
 	}
 }
 
+// JNA ships jnidispatch for two dozen platforms — about 5 MB of natives, of which
+// Jukeblock can only ever use one. The mod is Windows-only by construction (SMTC has no
+// equivalent elsewhere), so the rest is repackaged out before the jar is nested.
+//
+// The generated fabric.mod.json deliberately matches what Loom's own `include` produces,
+// id and version included: if another mod nests JNA too, Fabric still sees one library
+// at one version rather than two copies of the same classes.
+configurations {
+	jnaFull
+}
+
+def jnaMetadata = tasks.register("jnaMetadata") {
+	description = "Writes the fabric.mod.json for the trimmed JNA jar."
+
+	def output = layout.buildDirectory.file("slim-jna/fabric.mod.json")
+	def jnaVersion = project.jna_version
+	outputs.file(output)
+
+	doLast {
+		def file = output.get().asFile
+		file.parentFile.mkdirs()
+		file.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson([
+			schemaVersion: 1,
+			id           : "net_java_dev_jna_jna",
+			version      : jnaVersion,
+			name         : "jna",
+			custom       : ["fabric-loom:generated": true],
+		]))
+	}
+}
+
+tasks.register("slimJna", Zip) {
+	description = "Repackages JNA with only the Windows x64 native."
+	group = "build"
+
+	archiveFileName = "jna-${project.jna_version}.jar"
+	destinationDirectory = layout.buildDirectory.dir("slim-jna-out")
+
+	// The mod jar is a release artifact, so keep this byte-stable: a timestamp that moves
+	// every build makes it impossible to tell whether anything actually changed.
+	preserveFileTimestamps = false
+	reproducibleFileOrder = true
+	// Otherwise every emptied platform folder survives as a bare directory entry.
+	includeEmptyDirs = false
+
+	// Resolved in a closure so the configuration isn't resolved at configuration time.
+	from({ zipTree(configurations.jnaFull.singleFile) }) {
+		exclude { it.path.contains("jnidispatch") && !it.path.startsWith("com/sun/jna/win32-x86-64/") }
+	}
+	from(jnaMetadata)
+}
+
+// Nothing links the Ivy repository above to the task that fills it, so say it outright:
+// without this the include resolves before the jar exists, on a clean checkout.
+tasks.named("processIncludeJars") {
+	dependsOn tasks.named("slimJna")
+}
+
 dependencies {
 	// To change the versions see the gradle.properties file
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
@@ -36,10 +107,11 @@ dependencies {
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 	implementation "net.fabricmc:fabric-language-kotlin:${project.fabric_kotlin_version}"
 
-	// Bridge to the native SMTC cdylib. Not a Fabric mod, so Loom wraps it
-	// into a nested jar automatically.
+	// Bridge to the native SMTC cdylib. Nested through `slimJna` rather than `include`,
+	// for the reason given above that task.
 	implementation "net.java.dev.jna:jna:${project.jna_version}"
-	include "net.java.dev.jna:jna:${project.jna_version}"
+	jnaFull "net.java.dev.jna:jna:${project.jna_version}"
+	include "jukeblock.slim:jna:${project.jna_version}"
 
 	// Optional at runtime: config button in ModMenu, screen built with Cloth Config.
 	// Compiled against local jars for the same reason EnderPocket does — the
