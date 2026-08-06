@@ -201,17 +201,23 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 	private fun overSourceLabel(mx: Double, my: Double) = sourceLabel?.contains(mx, my) == true
 
 	/**
-	 * The session a click would switch to.
+	 * What a click on the source label would select.
 	 *
-	 * Cycles rather than opening a list: with two players — which is the normal case, a
-	 * music app and a browser tab — a list is more clicks than the thing it replaces.
+	 * Cycles rather than opening a list: with two players — the normal case, a music app
+	 * and a browser tab — a list is more clicks than the thing it replaces.
+	 *
+	 * The cycle runs through each session and then through a "follow the system" slot,
+	 * so pinning is never a one-way door. Null means that slot.
 	 */
 	private fun nextSession(track: TrackInfo): dev.astro.jukeblock.media.SessionSummary? {
 		val sources = MediaService.sessions
 		if (sources.size < 2) return null
-		val currentId = MediaService.pinnedSourceId ?: track.sourceId
-		val index = sources.indexOfFirst { it.sourceId == currentId }
-		return sources[(index + 1).mod(sources.size)]
+
+		// Positions 0..n-1 pin a session; position n follows whatever SMTC considers
+		// current. Unpinned starts at that last slot.
+		val current = MediaService.pinnedSourceId
+		val index = if (current == null) sources.size else sources.indexOfFirst { it.sourceId == current }
+		return sources.getOrNull((index + 1).mod(sources.size + 1))
 	}
 
 	private class TransportButton(
@@ -511,12 +517,14 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		if (sourceHovered) {
 			graphics.fill(sourceX, y + font.lineHeight, sourceX + sourceWidth, y + font.lineHeight + 1, accent)
 			val next = nextSession(track)
-			if (next != null) {
-				graphics.setTooltipForNextFrame(
-					Component.translatable("jukeblock.panel.switch_source", prettySourceName(next.sourceId)),
-					mouseX, mouseY,
-				)
-			}
+			graphics.setTooltipForNextFrame(
+				if (next == null) {
+					Component.translatable("jukeblock.panel.follow_system")
+				} else {
+					Component.translatable("jukeblock.panel.switch_source", prettySourceName(next.sourceId))
+				},
+				mouseX, mouseY,
+			)
 		}
 
 		y += font.lineHeight + SECTION_GAP
@@ -758,7 +766,11 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		}
 
 		if (track != null && overSourceLabel(mx, my)) {
-			nextSession(track)?.let { MediaService.pin(it.sourceId) }
+			// A null next means the follow-the-system slot, which is a real destination
+			// here rather than "nothing to do".
+			if (MediaService.sessions.size > 1) {
+				MediaService.pin(nextSession(track)?.sourceId)
+			}
 			return true
 		}
 

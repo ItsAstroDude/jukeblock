@@ -46,5 +46,14 @@
 	"jukeblock.hud.position.scale": "Size: %s",
 	"jukeblock.config.hudPlace": "Place the HUD",
 	"jukeblock.config.hudPlace.button": "Move freely…",
-	"jukeblock.panel.switch_source": "Switch to %s"
+	"jukeblock.panel.switch_source": "Switch to %s",
+	"jukeblock.panel.follow_system": "Follow whatever Windows is playing",
+	"jukeblock.config.category.themes": "Themes",
+	"jukeblock.config.theme": "Theme",
+	"jukeblock.config.theme.tooltip": "Presets for the panel's colours. Applying one copies its values into your settings — you can still tweak anything afterwards.",
+	"jukeblock.config.themeApply": "Apply selected theme",
+	"jukeblock.config.themeApply.button": "Apply",
+	"jukeblock.config.themeExport": "Save current look as a theme",
+	"jukeblock.config.themeExport.button": "Export…",
+	"jukeblock.config.themeFolder": "§7Drop .json themes into %s to see them in the list."
 }
