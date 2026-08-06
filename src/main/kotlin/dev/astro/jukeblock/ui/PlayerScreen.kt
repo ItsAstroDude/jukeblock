@@ -347,6 +347,23 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		val bandTop = height - PADDING - TOGGLE_SIZE
 		renderToggles(graphics, originX, bandTop, track, accent, mouseX, mouseY)
 		renderVolume(graphics, originX, bandTop, accent, mouseX, mouseY)
+
+		// Legend for the `*` on the source name, in the bottom padding — a footer, per
+		// Astro. A bare asterisk is a rune until something tells you what it means, and the
+		// tooltip that would only appears if you already suspect the label is clickable.
+		//
+		// Down here it costs no layout: the sections above stack to exactly `reserved`, so
+		// there is no spare row to put it in, and taking one would push the transport
+		// controls the moment you pinned. The padding strip is dead space either way.
+		if (MediaService.pinnedSourceId != null) {
+			graphics.text(
+				font,
+				Component.translatable("jukeblock.panel.pin_hint"),
+				originX + PADDING,
+				height - font.lineHeight - 2,
+				colorTextFaint,
+			)
+		}
 	}
 
 	private fun renderEmpty(graphics: GuiGraphicsExtractor, originX: Int) {
@@ -538,25 +555,8 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			)
 		}
 
-		y += font.lineHeight
-
-		// Spell the marker out. A bare asterisk is a rune until somebody tells you what it
-		// means, and the tooltip that would explain it only appears if you already suspect
-		// the label does something. Costs a line only while pinned, so the panel stays as
-		// tight as it was for everyone who never pins.
-		if (MediaService.pinnedSourceId != null) {
-			y += 2
-			graphics.centeredText(
-				font,
-				Component.translatable("jukeblock.panel.pin_hint"),
-				x + barWidth / 2,
-				y,
-				colorTextFaint,
-			)
-			y += font.lineHeight
-		}
-
-		return y + SECTION_GAP
+		y += font.lineHeight + SECTION_GAP
+		return y
 	}
 
 	/**
