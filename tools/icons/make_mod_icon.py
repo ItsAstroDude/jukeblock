@@ -127,8 +127,16 @@ def main():
     # Not a textbook 2:1 isometric cube: that shows so much of the top face the block
     # reads as squashed. Minecraft's own inventory block render is tilted steeper, so
     # the top is flatter and the walls are taller than they are wide.
-    cx, y0 = 112, 40
     w, h, d = 72, 30, 100
+
+    # Vertically centred rather than eyeballed. The block runs from the top apex down to
+    # the front corner plus the wall drop, so it is `2h + d` tall and the top belongs at
+    # half the leftover. It used to sit 8px high, which read as the block drifting toward
+    # the notes instead of sitting under them.
+    #
+    # Horizontal offset stays: dead-centre leaves the notes nowhere to go but off-canvas.
+    cx = 112
+    y0 = (OUT_SIZE - (2 * h + d)) // 2
 
     A = (cx, y0)                    # top apex
     B = (cx + w, y0 + h)            # right corner
