@@ -358,8 +358,16 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 		graphics.text(font, message, originX + PADDING, height / 2 - font.lineHeight / 2, colorTextDim)
 	}
 
-	/** Height the last frame's artwork actually occupied, for closing up the layout. */
-	private var lastArtHeight = 0
+	/**
+	 * The floor everything below the artwork flows from.
+	 *
+	 * This is the reserved box's height, not the image's: the art may use as little of the
+	 * box as its proportions want, but nothing underneath is ever allowed above the box's
+	 * lower edge. Flowing from the *image* instead made the whole lower half of the panel
+	 * jump every time a cover's aspect ratio changed — square Spotify art and a wide
+	 * browser thumbnail put the transport row in visibly different places.
+	 */
+	private var artBoxHeight = 0
 
 	private fun renderArtwork(graphics: GuiGraphicsExtractor, originX: Int, top: Int, accent: Int): Int {
 		val size = artSize
@@ -399,12 +407,9 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			val drawW = (srcW * scale).toInt().coerceAtLeast(1)
 			val drawH = (srcH * scale).toInt().coerceAtLeast(1)
 			val ax = originX + (railWidth - drawW) / 2
-			// Top-aligned, NOT centred in the reserved box. `size` is only an upper bound;
-			// a 16:9 browser thumbnail uses maybe half of it, and centring pushed the image
-			// down by half the slack while the layout below still flowed from `top + drawH`.
-			// Everything after the art then drew on top of the cover — visible the moment
-			// you switched from Spotify's square art to a browser's wide one.
-			val ay = top
+			// Centred in the box. Safe now that the box's lower edge is what the rest of the
+			// layout flows from — the image's own height no longer moves anything.
+			val ay = top + (size - drawH) / 2
 
 			// Soft glow behind the art, in the extracted accent.
 			graphics.fill(ax - 2, ay - 2, ax + drawW + 2, ay + drawH + 2, Accent.withAlpha(accent, 0.25f))
@@ -412,18 +417,19 @@ class PlayerScreen : Screen(Component.translatable("jukeblock.panel.title")) {
 			// innerBlit(x0, x1, y0, y1). Passing a size here silently renders the
 			// wrong rectangle.
 			graphics.blit(art, ax, ay, ax + drawW, ay + drawH, 0f, 1f, 0f, 1f)
-			lastArtHeight = drawH
+			// maxOf, not size, purely as a backstop: `scale` already clamps drawH to the
+			// box, but if that ever stops being true the layout should still land below the
+			// image rather than inside it.
+			artBoxHeight = maxOf(size, drawH)
 		} else {
 			// No artwork: a square placeholder, centred like the real thing would be.
-			lastArtHeight = size
+			artBoxHeight = size
 			val px = originX + (railWidth - size) / 2
 			graphics.fill(px, top, px + size, top + size, colorTrack)
 			val label = Component.translatable("jukeblock.panel.no_art")
 			graphics.centeredText(font, label, px + size / 2, top + size / 2 - font.lineHeight / 2, colorTextFaint)
 		}
-		// Flow from the bottom of the image, not the bottom of its reserved box. A small
-		// browser thumbnail otherwise left a void between the art and the title.
-		return top + lastArtHeight + SECTION_GAP
+		return top + artBoxHeight + SECTION_GAP
 	}
 
 	private fun renderMetadata(graphics: GuiGraphicsExtractor, originX: Int, top: Int, track: TrackInfo, accentForHover: Int, mouseOverTitle: Boolean): Int {
