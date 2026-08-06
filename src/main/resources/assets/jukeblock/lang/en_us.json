@@ -8,6 +8,7 @@
 	"jukeblock.panel.no_source": "No media source on this system",
 	"jukeblock.panel.no_art": "No artwork",
 	"jukeblock.panel.pinned": "pinned",
+	"jukeblock.panel.pin_hint": "* locked to this player",
 	"jukeblock.np.nothing": "Nothing is playing.",
 	"jukeblock.config.title": "Jukeblock",
 	"jukeblock.config.category.appearance": "Appearance",
