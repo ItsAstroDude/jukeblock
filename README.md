@@ -92,6 +92,48 @@ That needs the Rust MSVC toolchain and the VS Build Tools C++ workload.
 There's also `./gradlew smoke`, which exercises the media layer from a plain JVM without
 launching Minecraft — much faster than a game launch when you're changing the bridge.
 
+## The bundled native library
+
+Jukeblock ships a compiled `smtc_bridge.dll` inside the jar, at
+`win32-x86-64/smtc_bridge.dll`. Since that's a binary you can't read, here is everything
+about it in one place.
+
+**Why it exists at all.** The Windows System Media Transport Controls are a WinRT API.
+There is no usable pure-Java path to them, and they are the entire reason this mod needs
+no login. The alternative designs — a companion app, or making every user register their
+own Spotify developer application — are worse for the person installing it.
+
+**What it does.** Reads the current media session (title, artist, album, artwork, position,
+capability flags), sends transport commands to it, and reads or sets that player's volume
+through WASAPI. That's the complete list.
+
+**What it does not do.** It opens no sockets, reads and writes no files, spawns no
+processes, and reads no environment variables. Its entire dependency list is `serde_json`
+and Microsoft's own `windows` crate — you can confirm both claims from
+[`Cargo.toml`](native/smtc-bridge/Cargo.toml) and the single source file,
+[`lib.rs`](native/smtc-bridge/src/lib.rs).
+
+**Where it comes from.** That source file, built with `cargo build --release`. The
+[Build native bridge](../../actions/workflows/native.yml) workflow rebuilds it from source
+on every push and publishes the result as a downloadable artifact, so you don't have to
+take this README's word for it — or install Rust — to get a binary built from the source
+in front of you.
+
+The committed copy is:
+
+```
+SHA-256  0ef1491858634a75fc465d8fc6eeb05c6c9d8fa06c7644c1361f38b5cdac2c70
+size     269312 bytes
+```
+
+A fresh build won't match that hash. Rust release builds are not bit-for-bit reproducible
+across machines — absolute paths and the exact toolchain version end up in the binary. If
+you'd rather run your own build than the committed one, drop it into
+`src/main/resources/win32-x86-64/` and rebuild the mod; nothing else needs to change.
+
+**If loading it fails**, for any reason, the mod logs the failure and carries on without a
+media source. It never takes the game down with it.
+
 ## Third-party
 
 - [JNA](https://github.com/java-native-access/jna) (Apache 2.0 / LGPL 2.1), bundled.

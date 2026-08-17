@@ -1,0 +1,52 @@
+# Provenance for the shipped binary.
+#
+# Jukeblock bundles a compiled .dll, and a binary nobody can trace is a fair thing for a
+# reviewer to stop at. Every push rebuilds it from the Rust source in this repository and
+# publishes the result, so the committed binary can be compared against one produced by a
+# build that nobody involved in this project controls.
+
+name: Build native bridge
+
+on:
+  push:
+    paths:
+      - 'native/**'
+      - '.github/workflows/native.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          rustc --version
+          cargo --version
+
+      - name: Build
+        working-directory: native/smtc-bridge
+        run: cargo build --release
+
+      - name: Compare against the committed binary
+        shell: pwsh
+        run: |
+          $built = "native/smtc-bridge/target/release/smtc_bridge.dll"
+          $shipped = "src/main/resources/win32-x86-64/smtc_bridge.dll"
+          Write-Host "built from source : $((Get-FileHash $built -Algorithm SHA256).Hash)  $((Get-Item $built).Length) bytes"
+          Write-Host "committed in repo : $((Get-FileHash $shipped -Algorithm SHA256).Hash)  $((Get-Item $shipped).Length) bytes"
+          Write-Host ""
+          Write-Host "Hashes are not expected to match: Rust release builds are not bit-for-bit"
+          Write-Host "reproducible across machines (absolute paths and toolchain version are baked"
+          Write-Host "in). The artifact below is the one this workflow just built from source, and"
+          Write-Host "can be dropped into src/main/resources/win32-x86-64/ in place of the committed"
+          Write-Host "copy."
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smtc_bridge-dll
+          path: native/smtc-bridge/target/release/smtc_bridge.dll
+          if-no-files-found: error
