@@ -49,9 +49,7 @@ class JukeblockClient : ClientModInitializer {
 				volumeVisible = panelOpen,
 			)
 
-			Marquee.forgetAllExcept(MediaService.nowPlaying?.let {
-				setOf("panel:" + it.trackKey, "hud:" + it.trackKey)
-			} ?: emptySet())
+			Marquee.forgetAllExcept(MediaService.nowPlaying?.trackKey)
 
 			while (JukeblockKeys.toggle.consumeClick()) {
 				// Only from in-world: opening the rail on top of another screen would

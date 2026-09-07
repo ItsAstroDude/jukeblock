@@ -44,9 +44,17 @@ object Marquee {
 	 * Drops stale phases.
 	 *
 	 * One entry is added per track title ever scrolled, so over a long session this
-	 * would otherwise creep. Called from the client tick with the keys still in use.
+	 * would otherwise creep. The hot path deliberately takes a track key instead of a
+	 * Set, avoiding two temporary strings and a collection every client tick.
 	 */
-	fun forgetAllExcept(keep: Set<String>) {
-		if (phases.size > 8) phases.keys.retainAll(keep)
+	fun forgetAllExcept(trackKey: String?) {
+		if (phases.size <= 8) return
+		if (trackKey == null) {
+			phases.clear()
+			return
+		}
+		val panelKey = "panel:$trackKey"
+		val hudKey = "hud:$trackKey"
+		phases.keys.removeIf { it != panelKey && it != hudKey }
 	}
 }

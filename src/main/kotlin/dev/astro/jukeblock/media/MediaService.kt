@@ -34,9 +34,20 @@ object MediaService {
 	/** Session enumeration is ~5x the cost of a poll and changes rarely. */
 	private const val SESSION_SCAN_EVERY_MS = 5_000L
 
+	/**
+	 * WASAPI volume writes enumerate audio sessions. A slider can emit dozens of mouse
+	 * events per second, so keep only its newest value and limit native writes to a
+	 * rate that still feels immediate to a human.
+	 */
+	private const val VOLUME_WRITE_MIN_INTERVAL_MS = 75L
+
 	private var source: MediaSource? = null
 	private var executor: ScheduledExecutorService? = null
 	private val running = AtomicBoolean(false)
+	private val volumeWriteLock = Any()
+	private var pendingVolumeWrite: Float? = null
+	private var volumeWriteScheduled = false
+	private var lastVolumeWriteMs = 0L
 
 	@Volatile
 	private var lastSessionScan = 0L
@@ -112,6 +123,10 @@ object MediaService {
 		executor = null
 		nowPlaying = null
 		sessions = emptyList()
+		synchronized(volumeWriteLock) {
+			pendingVolumeWrite = null
+			volumeWriteScheduled = false
+		}
 	}
 
 	/** Sets the poll rate, and whether volume is worth keeping fresh. */
@@ -153,13 +168,50 @@ object MediaService {
 	 * the native call is still in flight.
 	 */
 	fun setVolume(value: Float) {
-		val src = source ?: return
 		val clamped = value.coerceIn(0f, 1f)
 		volume = clamped
-		submit {
-			src.setVolume(clamped, pinnedSourceId)
-			volume = src.volume(pinnedSourceId) ?: -1f
+		if (source == null) return
+
+		val delay = synchronized(volumeWriteLock) {
+			pendingVolumeWrite = clamped
+			if (volumeWriteScheduled) return
+			volumeWriteScheduled = true
+			(lastVolumeWriteMs + VOLUME_WRITE_MIN_INTERVAL_MS - System.currentTimeMillis()).coerceAtLeast(0L)
 		}
+		scheduleVolumeWrite(delay)
+	}
+
+	private fun scheduleVolumeWrite(delayMs: Long) {
+		val exec = executor ?: return
+		if (exec.isShutdown) return
+		try {
+			exec.schedule({ guard { flushVolumeWrite() } }, delayMs, TimeUnit.MILLISECONDS)
+		} catch (_: Exception) {
+			// Racing with stop(); nothing useful to do.
+		}
+	}
+
+	/** Runs on the media thread. One drag becomes a small, bounded sequence of writes. */
+	private fun flushVolumeWrite() {
+		val value = synchronized(volumeWriteLock) {
+			pendingVolumeWrite.also { pendingVolumeWrite = null }
+		} ?: run {
+			synchronized(volumeWriteLock) { volumeWriteScheduled = false }
+			return
+		}
+
+		source?.setVolume(value, pinnedSourceId)
+		lastVolumeWriteMs = System.currentTimeMillis()
+
+		val nextDelay = synchronized(volumeWriteLock) {
+			if (pendingVolumeWrite == null) {
+				volumeWriteScheduled = false
+				null
+			} else {
+				VOLUME_WRITE_MIN_INTERVAL_MS
+			}
+		}
+		if (nextDelay != null) scheduleVolumeWrite(nextDelay)
 	}
 
 	/** Fetches album art off-thread and hands the bytes to [consumer] on that thread. */
