@@ -1,0 +1,59 @@
+# .github/workflows/build-bridge.yml
+#
+# NOTE: this assumes the Rust cdylib crate lives at `native/smtc_bridge`
+# (Cargo.toml + src/lib.rs there, crate name "smtc_bridge", crate-type = ["cdylib"]).
+# If your actual folder is different, change every `native/smtc_bridge` below
+# to match your repo layout.
+
+name: Build SMTC Bridge
+
+on:
+  push:
+    tags:
+      - "bridge-v*"     # push a tag like bridge-v1.0.0 to trigger a build+release
+  workflow_dispatch: {}  # lets you trigger it manually from the Actions tab too
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: native/smtc_bridge
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build release DLL
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Compute SHA256 of the built DLL
+        shell: pwsh
+        run: |
+          $hash = Get-FileHash -Algorithm SHA256 target/x86_64-pc-windows-msvc/release/smtc_bridge.dll
+          $hash.Hash | Out-File -FilePath smtc_bridge.dll.sha256 -Encoding ascii
+          Write-Host "SHA256: $($hash.Hash)"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: smtc_bridge-dll
+          path: |
+            native/smtc_bridge/target/x86_64-pc-windows-msvc/release/smtc_bridge.dll
+            native/smtc_bridge/smtc_bridge.dll.sha256
+
+      # Only cuts a public GitHub Release when you push a tag.
+      # This release is what you link in the Modrinth moderation thread —
+      # it's the public, reproducible proof of where the DLL came from.
+      - name: Create GitHub Release with DLL
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            native/smtc_bridge/target/x86_64-pc-windows-msvc/release/smtc_bridge.dll
+            native/smtc_bridge/smtc_bridge.dll.sha256
