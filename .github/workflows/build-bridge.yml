@@ -6,6 +6,8 @@
 # to match your repo layout.
 
 name: Build SMTC Bridge
+permissions:
+  contents: write
 
 on:
   push:
